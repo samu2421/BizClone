@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: bizclone_postgres
+    environment:
+      POSTGRES_USER: bizclone_user
+      POSTGRES_PASSWORD: bizclone_pass
+      POSTGRES_DB: bizclone_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bizclone_user -d bizclone_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bizclone_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: bizclone_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - bizclone_network
+
+  # Celery Worker (optional - can be started separately)
+  # celery_worker:
+  #   build: .
+  #   container_name: bizclone_celery_worker
+  #   command: celery -A backend.app.workers.celery_app worker --loglevel=info
+  #   depends_on:
+  #     - redis
+  #     - postgres
+  #   environment:
+  #     - DATABASE_URL=postgresql://bizclone_user:bizclone_pass@postgres:5432/bizclone_db
+  #     - REDIS_URL=redis://redis:6379/0
+  #   networks:
+  #     - bizclone_network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  bizclone_network:
+    driver: bridge
+
