@@ -47,7 +47,7 @@ class Transcript(Base):
     )
     
     # Relationships
-    call = relationship("Call", back_populates="transcripts", lazy="select", repr=False)
+    call = relationship("Call", back_populates="transcripts", lazy="select")
     
     def __repr__(self):
         return f"<Transcript(id={self.id}, call_id={self.call_id}, text_preview={self.text[:50]}...)>"

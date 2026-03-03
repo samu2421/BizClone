@@ -56,9 +56,9 @@ class Customer(Base):
     last_call_at = Column(DateTime(timezone=True), nullable=True)
     
     # Relationships
-    calls = relationship("Call", back_populates="customer", cascade="all, delete-orphan", lazy="select", repr=False)
-    appointments = relationship("Appointment", back_populates="customer", cascade="all, delete-orphan", lazy="select", repr=False)
-    conversation_states = relationship("ConversationStateModel", back_populates="customer", lazy="select", repr=False)
+    calls = relationship("Call", back_populates="customer", cascade="all, delete-orphan", lazy="select")
+    appointments = relationship("Appointment", back_populates="customer", cascade="all, delete-orphan", lazy="select")
+    conversation_states = relationship("ConversationStateModel", back_populates="customer", lazy="select")
     
     def __repr__(self):
         return f"<Customer(id={self.id}, phone={self.phone_number}, name={self.name})>"

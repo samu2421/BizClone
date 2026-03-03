@@ -91,11 +91,11 @@ class Call(Base):
     ended_at = Column(DateTime(timezone=True), nullable=True)
     
     # Relationships
-    customer = relationship("Customer", back_populates="calls", lazy="select", repr=False)
-    transcripts = relationship("Transcript", back_populates="call", cascade="all, delete-orphan", lazy="select", repr=False)
-    events = relationship("CallEvent", back_populates="call", cascade="all, delete-orphan", lazy="select", repr=False)
-    appointments = relationship("Appointment", back_populates="call", cascade="all, delete-orphan", lazy="select", repr=False)
-    conversation_state = relationship("ConversationStateModel", back_populates="call", uselist=False, lazy="select", repr=False)
+    customer = relationship("Customer", back_populates="calls", lazy="select")
+    transcripts = relationship("Transcript", back_populates="call", cascade="all, delete-orphan", lazy="select")
+    events = relationship("CallEvent", back_populates="call", cascade="all, delete-orphan", lazy="select")
+    appointments = relationship("Appointment", back_populates="call", cascade="all, delete-orphan", lazy="select")
+    conversation_state = relationship("ConversationStateModel", back_populates="call", uselist=False, lazy="select")
     
     def __repr__(self):
         return f"<Call(id={self.id}, call_sid={self.call_sid}, status={self.status})>"

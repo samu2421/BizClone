@@ -4,7 +4,8 @@ Pydantic schemas for calendar API endpoints.
 from __future__ import annotations
 from typing import Optional, List
 from pydantic import BaseModel, Field
-from datetime import datetime, date
+from datetime import datetime
+from datetime import date as DateType
 
 
 class AppointmentBase(BaseModel):
@@ -63,7 +64,7 @@ class AppointmentResponse(AppointmentBase):
 class CalendarDayView(BaseModel):
     """Schema for a single day's calendar view."""
 
-    date: date = Field(..., description="Date")
+    date: DateType = Field(..., description="Date")
     appointments: List[AppointmentResponse] = Field(default_factory=list, description="Appointments for this day")
     total_appointments: int = Field(..., description="Total number of appointments")
     available_slots: int = Field(..., description="Number of available slots")
@@ -82,8 +83,8 @@ class CalendarDayView(BaseModel):
 class CalendarWeekView(BaseModel):
     """Schema for a week's calendar view."""
 
-    start_date: date = Field(..., description="Week start date")
-    end_date: date = Field(..., description="Week end date")
+    start_date: DateType = Field(..., description="Week start date")
+    end_date: DateType = Field(..., description="Week end date")
     days: List[CalendarDayView] = Field(..., description="Days in the week")
     total_appointments: int = Field(..., description="Total appointments in the week")
     
@@ -137,7 +138,7 @@ class AvailableSlot(BaseModel):
 class AvailabilityResponse(BaseModel):
     """Schema for availability check response."""
 
-    date: "date" = Field(..., description="Date checked")
+    date: DateType = Field(..., description="Date checked")
     available_slots: List[AvailableSlot] = Field(..., description="Available time slots")
     total_slots: int = Field(..., description="Total slots in the day")
     available_count: int = Field(..., description="Number of available slots")

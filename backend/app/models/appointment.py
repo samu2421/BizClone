@@ -118,9 +118,9 @@ class Appointment(Base):
     )
     
     # Relationships
-    call = relationship("Call", back_populates="appointments", lazy="select", repr=False)
-    customer = relationship("Customer", back_populates="appointments", lazy="select", repr=False)
-    conversation_state = relationship("ConversationStateModel", back_populates="appointment", uselist=False, lazy="select", repr=False)
+    call = relationship("Call", back_populates="appointments", lazy="select")
+    customer = relationship("Customer", back_populates="appointments", lazy="select")
+    conversation_state = relationship("ConversationStateModel", back_populates="appointment", uselist=False, lazy="select")
     
     def __repr__(self):
         return (
