@@ -20,6 +20,7 @@ from app.services.scheduling import SchedulingService
 from app.db.session import SessionLocal
 from app.db.crud import (
     get_call_by_id,
+    get_customer_by_id,
     create_transcript,
     update_call,
     update_call_by_sid,
@@ -29,8 +30,11 @@ from app.db.crud import (
     get_appointment_by_id,
     create_conversation_state,
     get_conversation_state_by_call_id,
+    get_transcript_by_call_id,
+    create_record,
 )
 from app.models import ConversationState, AppointmentStatus
+from app.config.settings import settings
 
 logger = get_logger(__name__)
 
@@ -82,6 +86,7 @@ def transcribe_audio_task(
         call = get_call_by_id(db, call_id=call_id)
         if not call:
             logger.error("call_not_found", call_id=call_id)
+            db.rollback()
             raise ValueError(f"Call not found: {call_id}")
         
         # Create transcription event
@@ -115,7 +120,7 @@ def transcribe_audio_task(
             confidence=result.confidence,
             model_used=result.model_name,
             processing_time_seconds=result.processing_time,
-            audio_duration=result.duration,
+            audio_duration_seconds=result.duration,
             audio_file_path=audio_file_path
         )
         
@@ -168,6 +173,25 @@ def transcribe_audio_task(
             )
             # Don't fail transcription if queuing fails
 
+        # Create task audit record
+        try:
+            create_record(
+                db,
+                record_type="task",
+                entity_id=call_id,
+                entity_type="call",
+                payload={
+                    "task_name": "transcribe_audio",
+                    "task_id": self.request.id,
+                    "transcript_id": str(transcript.id),
+                    "status": "success",
+                    "processing_time_seconds": result.processing_time,
+                },
+                summary=f"Transcription completed for call {call_id}",
+            )
+        except Exception:
+            pass
+
         return {
             "status": "success",
             "call_id": call_id,
@@ -177,7 +201,16 @@ def transcribe_audio_task(
             "confidence": result.confidence,
             "processing_time_seconds": result.processing_time
         }
-        
+
+    except ValueError as exc:
+        logger.error(
+            "transcription_task_failed_non_retryable",
+            task_id=self.request.id,
+            call_id=call_id,
+            error=str(exc),
+        )
+        db.rollback()
+        raise
     except Exception as exc:
         logger.error(
             "transcription_task_failed",
@@ -188,7 +221,8 @@ def transcribe_audio_task(
             error=str(exc),
             exc_info=True
         )
-        
+        db.rollback()
+
         # Create failure event
         try:
             create_call_event(
@@ -203,11 +237,10 @@ def transcribe_audio_task(
                 }
             )
         except Exception:
-            pass  # Don't fail if event creation fails
-        
-        # Retry the task
+            db.rollback()
+
         raise self.retry(exc=exc)
-        
+
     finally:
         db.close()
 
@@ -253,7 +286,7 @@ def classify_intent_task(
                 db,
                 call_id=call_id,
                 event_type="intent_classification_started",
-                metadata={"task_id": self.request.id}
+                event_data={"task_id": self.request.id}
             )
         except Exception:
             pass  # Don't fail if event creation fails
@@ -278,7 +311,7 @@ def classify_intent_task(
                 db,
                 call_id=call_id,
                 event_type="intent_classification_completed",
-                metadata={
+                event_data={
                     "task_id": self.request.id,
                     "intent": result.intent.value,
                     "confidence": result.confidence,
@@ -312,6 +345,25 @@ def classify_intent_task(
             )
             # Don't fail intent classification if queuing fails
 
+        # Create task audit record
+        try:
+            create_record(
+                db,
+                record_type="task",
+                entity_id=call_id,
+                entity_type="call",
+                payload={
+                    "task_name": "classify_intent",
+                    "task_id": self.request.id,
+                    "intent": result.intent.value,
+                    "confidence": result.confidence,
+                    "status": "success",
+                },
+                summary=f"Intent classified as {result.intent.value} for call {call_id}",
+            )
+        except Exception:
+            pass
+
         return {
             "call_id": call_id,
             "intent": result.intent.value,
@@ -327,6 +379,10 @@ def classify_intent_task(
             error=str(exc),
             exc_info=True
         )
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
         # Create event for classification failed
         try:
@@ -334,7 +390,7 @@ def classify_intent_task(
                 db,
                 call_id=call_id,
                 event_type="intent_classification_failed",
-                metadata={
+                event_data={
                     "task_id": self.request.id,
                     "error": str(exc)
                 }
@@ -392,7 +448,7 @@ def extract_entities_task(
                 db,
                 call_id=call_id,
                 event_type="entity_extraction_started",
-                metadata={"task_id": self.request.id}
+                event_data={"task_id": self.request.id}
             )
         except Exception:
             pass  # Don't fail if event creation fails
@@ -473,7 +529,7 @@ def extract_entities_task(
                 db,
                 call_id=call_id,
                 event_type="entity_extraction_completed",
-                metadata={
+                event_data={
                     "task_id": self.request.id,
                     "appointment_id": appointment.id,
                     "service_type": result.service_type,
@@ -517,6 +573,26 @@ def extract_entities_task(
             )
             # Don't fail entity extraction if queuing fails
 
+        # Create task audit record
+        try:
+            create_record(
+                db,
+                record_type="task",
+                entity_id=call_id,
+                entity_type="call",
+                payload={
+                    "task_name": "extract_entities",
+                    "task_id": self.request.id,
+                    "appointment_id": str(appointment.id),
+                    "service_type": result.service_type,
+                    "urgency": result.urgency,
+                    "status": "success",
+                },
+                summary=f"Entities extracted for call {call_id}",
+            )
+        except Exception:
+            pass
+
         return {
             "call_id": call_id,
             "appointment_id": appointment.id,
@@ -534,6 +610,10 @@ def extract_entities_task(
             error=str(exc),
             exc_info=True
         )
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
         # Create event for extraction failed
         try:
@@ -541,7 +621,7 @@ def extract_entities_task(
                 db,
                 call_id=call_id,
                 event_type="entity_extraction_failed",
-                metadata={
+                event_data={
                     "task_id": self.request.id,
                     "error": str(exc)
                 }
@@ -578,8 +658,9 @@ def detect_priority_task(self, call_id: str) -> dict:
             logger.error("priority_detection_call_not_found", call_id=call_id)
             return {"error": "Call not found", "call_id": call_id}
 
-        # Get transcript
-        if not call.transcript or not call.transcript.text:
+        # Get transcript (Call has transcripts plural; use latest)
+        transcript = get_transcript_by_call_id(db, call_id)
+        if not transcript or not transcript.text:
             logger.warning(
                 "priority_detection_no_transcript",
                 call_id=call_id
@@ -590,7 +671,7 @@ def detect_priority_task(self, call_id: str) -> dict:
                 "reason": "No transcript available"
             }
 
-        transcript_text = call.transcript.text
+        transcript_text = transcript.text
 
         # Initialize detector
         detector = PriorityDetector()
@@ -605,7 +686,7 @@ def detect_priority_task(self, call_id: str) -> dict:
         if result.is_emergency:
             update_call(
                 db,
-                call.id,
+                str(call.id),
                 is_emergency="yes"
             )
 
@@ -632,7 +713,7 @@ def detect_priority_task(self, call_id: str) -> dict:
                 db,
                 call_id=call_id,
                 event_type="priority_detected",
-                metadata={
+                event_data={
                     "task_id": self.request.id,
                     "is_emergency": result.is_emergency,
                     "urgency_level": result.urgency_level,
@@ -654,6 +735,25 @@ def detect_priority_task(self, call_id: str) -> dict:
             confidence=result.confidence
         )
 
+        # Create task audit record
+        try:
+            create_record(
+                db,
+                record_type="task",
+                entity_id=call_id,
+                entity_type="call",
+                payload={
+                    "task_name": "detect_priority",
+                    "task_id": self.request.id,
+                    "is_emergency": result.is_emergency,
+                    "urgency_level": result.urgency_level,
+                    "status": "success",
+                },
+                summary=f"Priority detected for call {call_id} (emergency={result.is_emergency})",
+            )
+        except Exception:
+            pass
+
         return {
             "call_id": call_id,
             "is_emergency": result.is_emergency,
@@ -672,6 +772,10 @@ def detect_priority_task(self, call_id: str) -> dict:
             error=str(exc),
             exc_info=True
         )
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
         # Create event for detection failed
         try:
@@ -679,7 +783,7 @@ def detect_priority_task(self, call_id: str) -> dict:
                 db,
                 call_id=call_id,
                 event_type="priority_detection_failed",
-                metadata={
+                event_data={
                     "task_id": self.request.id,
                     "error": str(exc)
                 }
@@ -738,32 +842,30 @@ def schedule_appointment_task(
             return {"error": "Appointment not found", "appointment_id": appointment_id}
 
         # Initialize scheduling service
-        scheduler = SchedulingService(db)
+        scheduler = SchedulingService()
 
         # Determine if this is an emergency
+        urgency_val = getattr(appointment.urgency, "value", str(appointment.urgency or ""))
         is_emergency = (
             intent == "emergency" or
-            appointment.urgency == "emergency"
+            urgency_val == "emergency"
         )
 
-        # Schedule the appointment
+        # Schedule the appointment (scheduler mutates appointment in place)
         result = scheduler.schedule_appointment(
-            customer_id=appointment.customer_id,
-            service_type=appointment.service_type or "general_plumbing",
+            db,
+            appointment,
             requested_time=appointment.requested_date,
-            duration_minutes=60,  # Default 1 hour
-            is_emergency=is_emergency,
-            notes=appointment.notes,
-            location=appointment.address or appointment.location_text
+            force_emergency=is_emergency
         )
 
         if result.success:
-            # Update appointment with scheduled time
+            # Update appointment with scheduled time (from mutated appointment)
             update_appointment(
                 db,
                 appointment_id=appointment_id,
-                scheduled_time_start=result.scheduled_time,
-                scheduled_time_end=result.end_time,
+                scheduled_time_start=appointment.scheduled_time_start,
+                scheduled_time_end=appointment.scheduled_time_end,
                 status=AppointmentStatus.SCHEDULED.value
             )
 
@@ -772,7 +874,7 @@ def schedule_appointment_task(
                 db,
                 call_id=call_id,
                 event_type="appointment_scheduled",
-                metadata={
+                event_data={
                     "task_id": self.request.id,
                     "appointment_id": appointment_id,
                     "scheduled_time": result.scheduled_time.isoformat(),
@@ -787,6 +889,58 @@ def schedule_appointment_task(
                 scheduled_time=result.scheduled_time.isoformat(),
                 task_id=self.request.id
             )
+
+            # Google Calendar: create event after appointment_scheduled
+            try:
+                from app.services.integrations.google_calendar import (
+                    create_calendar_event as create_gcal_event,
+                )
+                service_label = (
+                    (appointment.service_type or "Appointment")
+                    .replace("_", " ").title()
+                )
+                customer = get_customer_by_id(db, appointment.customer_id)
+                customer_name = (
+                    (appointment.contact_name or (customer.name if customer else None))
+                    or "Customer"
+                )
+                summary = f"{service_label} – {customer_name}"
+                create_gcal_event(
+                    summary=summary,
+                    start_time=result.scheduled_time,
+                    duration_minutes=getattr(
+                        settings,
+                        "appointment_duration_minutes",
+                        60,
+                    ),
+                    description=f"Call {call_id} / Appointment {appointment_id}",
+                )
+            except Exception as gcal_exc:
+                logger.warning(
+                    "google_calendar_event_skipped",
+                    call_id=call_id,
+                    appointment_id=appointment_id,
+                    error=str(gcal_exc),
+                )
+
+            # Create task audit record
+            try:
+                create_record(
+                    db,
+                    record_type="task",
+                    entity_id=call_id,
+                    entity_type="call",
+                    payload={
+                        "task_name": "schedule_appointment",
+                        "task_id": self.request.id,
+                        "appointment_id": appointment_id,
+                        "scheduled_time": result.scheduled_time.isoformat(),
+                        "status": "success",
+                    },
+                    summary=f"Appointment {appointment_id} scheduled for call {call_id}",
+                )
+            except Exception:
+                pass
 
             return {
                 "success": True,
@@ -808,7 +962,7 @@ def schedule_appointment_task(
                 db,
                 call_id=call_id,
                 event_type="appointment_scheduling_failed",
-                metadata={
+                event_data={
                     "task_id": self.request.id,
                     "appointment_id": appointment_id,
                     "reason": result.message
@@ -839,6 +993,10 @@ def schedule_appointment_task(
             error=str(exc),
             exc_info=True
         )
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
         # Create event for scheduling error
         try:
@@ -846,7 +1004,7 @@ def schedule_appointment_task(
                 db,
                 call_id=call_id,
                 event_type="appointment_scheduling_error",
-                metadata={
+                event_data={
                     "task_id": self.request.id,
                     "appointment_id": appointment_id,
                     "error": str(exc)

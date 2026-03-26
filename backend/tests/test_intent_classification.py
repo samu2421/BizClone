@@ -15,10 +15,11 @@ from app.core.exceptions import AIServiceError
 
 class TestIntentClassifier:
     """Test intent classification service."""
-    
+
     @pytest.fixture
-    def mock_openai_response(self):
-        """Create a mock OpenAI response."""
+    def mock_groq_response(self):
+        """Create a mock Groq/LLM response."""
+
         def create_response(intent: str, confidence: float, reasoning: str):
             mock_response = Mock()
             mock_choice = Mock()
@@ -31,44 +32,43 @@ class TestIntentClassifier:
             mock_choice.message = mock_message
             mock_response.choices = [mock_choice]
             return mock_response
+
         return create_response
-    
+
     @pytest.fixture
     def classifier(self):
-        """Create intent classifier with mock API key."""
-        with patch('app.services.ai.intent_classifier.OpenAI'):
-            return IntentClassifier(api_key="test-key")
-    
+        """Create intent classifier with mock Groq client."""
+        return IntentClassifier(api_key="test-key")
+
+    def _setup_mock_client(self, classifier, mock_response):
+        """Configure classifier's Groq client to return mock response."""
+        mock_client = Mock()
+        mock_client.chat.completions.create = Mock(return_value=mock_response)
+        classifier._client = mock_client
+
     def test_classifier_initialization(self, classifier):
         """Test classifier initializes correctly."""
         assert classifier.api_key == "test-key"
-        assert classifier.model == "gpt-4o-mini"
-    
-    def test_classify_booking_intent(self, classifier, mock_openai_response):
+        assert classifier.model  # Uses settings default (Groq model)
+
+    def test_classify_booking_intent(self, classifier, mock_groq_response):
         """Test classification of booking intent."""
-        # Mock OpenAI response
-        classifier.client.chat.completions.create = Mock(
-            return_value=mock_openai_response(
-                "booking",
-                0.95,
-                "Customer wants to schedule a new appointment"
-            )
+        self._setup_mock_client(
+            classifier,
+            mock_groq_response("booking", 0.95, "Customer wants to schedule a new appointment")
         )
-        
+
         result = classifier.classify("I need to schedule a plumber for tomorrow")
         
         assert result.intent == IntentType.BOOKING
         assert result.confidence == 0.95
         assert "schedule" in result.reasoning.lower()
     
-    def test_classify_emergency_intent(self, classifier, mock_openai_response):
+    def test_classify_emergency_intent(self, classifier, mock_groq_response):
         """Test classification of emergency intent."""
-        classifier.client.chat.completions.create = Mock(
-            return_value=mock_openai_response(
-                "emergency",
-                0.99,
-                "Customer has urgent flooding emergency"
-            )
+        self._setup_mock_client(
+            classifier,
+            mock_groq_response("emergency", 0.99, "Customer has urgent flooding emergency")
         )
         
         result = classifier.classify("HELP! My basement is flooding!")
@@ -77,14 +77,11 @@ class TestIntentClassifier:
         assert result.confidence == 0.99
         assert result.confidence > 0.9
     
-    def test_classify_pricing_intent(self, classifier, mock_openai_response):
+    def test_classify_pricing_intent(self, classifier, mock_groq_response):
         """Test classification of pricing intent."""
-        classifier.client.chat.completions.create = Mock(
-            return_value=mock_openai_response(
-                "pricing",
-                0.92,
-                "Customer asking about costs"
-            )
+        self._setup_mock_client(
+            classifier,
+            mock_groq_response("pricing", 0.92, "Customer asking about costs")
         )
         
         result = classifier.classify("How much do you charge for fixing a leak?")
@@ -92,14 +89,11 @@ class TestIntentClassifier:
         assert result.intent == IntentType.PRICING
         assert result.confidence == 0.92
     
-    def test_classify_reschedule_intent(self, classifier, mock_openai_response):
+    def test_classify_reschedule_intent(self, classifier, mock_groq_response):
         """Test classification of reschedule intent."""
-        classifier.client.chat.completions.create = Mock(
-            return_value=mock_openai_response(
-                "reschedule",
-                0.97,
-                "Customer wants to change appointment time"
-            )
+        self._setup_mock_client(
+            classifier,
+            mock_groq_response("reschedule", 0.97, "Customer wants to change appointment time")
         )
         
         result = classifier.classify("Can I move my appointment to next week?")
@@ -107,14 +101,11 @@ class TestIntentClassifier:
         assert result.intent == IntentType.RESCHEDULE
         assert result.confidence == 0.97
     
-    def test_classify_cancel_intent(self, classifier, mock_openai_response):
+    def test_classify_cancel_intent(self, classifier, mock_groq_response):
         """Test classification of cancel intent."""
-        classifier.client.chat.completions.create = Mock(
-            return_value=mock_openai_response(
-                "cancel",
-                0.96,
-                "Customer wants to cancel appointment"
-            )
+        self._setup_mock_client(
+            classifier,
+            mock_groq_response("cancel", 0.96, "Customer wants to cancel appointment")
         )
         
         result = classifier.classify("I need to cancel my Friday appointment")
@@ -122,14 +113,11 @@ class TestIntentClassifier:
         assert result.intent == IntentType.CANCEL
         assert result.confidence == 0.96
     
-    def test_classify_availability_intent(self, classifier, mock_openai_response):
+    def test_classify_availability_intent(self, classifier, mock_groq_response):
         """Test classification of availability intent."""
-        classifier.client.chat.completions.create = Mock(
-            return_value=mock_openai_response(
-                "availability",
-                0.90,
-                "Customer asking about availability"
-            )
+        self._setup_mock_client(
+            classifier,
+            mock_groq_response("availability", 0.90, "Customer asking about availability")
         )
         
         result = classifier.classify("Are you available this weekend?")
@@ -137,14 +125,11 @@ class TestIntentClassifier:
         assert result.intent == IntentType.AVAILABILITY
         assert result.confidence == 0.90
     
-    def test_classify_service_question_intent(self, classifier, mock_openai_response):
+    def test_classify_service_question_intent(self, classifier, mock_groq_response):
         """Test classification of service question intent."""
-        classifier.client.chat.completions.create = Mock(
-            return_value=mock_openai_response(
-                "service_question",
-                0.93,
-                "Customer asking about services offered"
-            )
+        self._setup_mock_client(
+            classifier,
+            mock_groq_response("service_question", 0.93, "Customer asking about services offered")
         )
         
         result = classifier.classify("What kind of plumbing services do you offer?")
@@ -152,14 +137,11 @@ class TestIntentClassifier:
         assert result.intent == IntentType.SERVICE_QUESTION
         assert result.confidence == 0.93
     
-    def test_classify_other_intent(self, classifier, mock_openai_response):
+    def test_classify_other_intent(self, classifier, mock_groq_response):
         """Test classification of other intent."""
-        classifier.client.chat.completions.create = Mock(
-            return_value=mock_openai_response(
-                "other",
-                0.85,
-                "General greeting or thanks"
-            )
+        self._setup_mock_client(
+            classifier,
+            mock_groq_response("other", 0.85, "General greeting or thanks")
         )
         
         result = classifier.classify("Thanks for the great service!")
@@ -176,15 +158,12 @@ class TestIntentClassifier:
             classifier.classify("   ")
 
     def test_classify_invalid_intent_defaults_to_other(
-        self, classifier, mock_openai_response
+        self, classifier, mock_groq_response
     ):
         """Test that invalid intent defaults to OTHER."""
-        classifier.client.chat.completions.create = Mock(
-            return_value=mock_openai_response(
-                "invalid_intent",
-                0.80,
-                "Unknown intent"
-            )
+        self._setup_mock_client(
+            classifier,
+            mock_groq_response("invalid_intent", 0.80, "Unknown intent")
         )
 
         result = classifier.classify("Some text")
@@ -192,28 +171,22 @@ class TestIntentClassifier:
         assert result.intent == IntentType.OTHER
 
     def test_classify_confidence_clamped_to_range(
-        self, classifier, mock_openai_response
+        self, classifier, mock_groq_response
     ):
         """Test that confidence is clamped to 0-1 range."""
         # Test confidence > 1
-        classifier.client.chat.completions.create = Mock(
-            return_value=mock_openai_response(
-                "booking",
-                1.5,
-                "High confidence"
-            )
+        self._setup_mock_client(
+            classifier,
+            mock_groq_response("booking", 1.5, "High confidence")
         )
 
         result = classifier.classify("Book appointment")
         assert result.confidence == 1.0
 
         # Test confidence < 0
-        classifier.client.chat.completions.create = Mock(
-            return_value=mock_openai_response(
-                "booking",
-                -0.5,
-                "Negative confidence"
-            )
+        self._setup_mock_client(
+            classifier,
+            mock_groq_response("booking", -0.5, "Negative confidence")
         )
 
         result = classifier.classify("Book appointment")
@@ -228,21 +201,20 @@ class TestIntentClassifier:
         mock_choice.message = mock_message
         mock_response.choices = [mock_choice]
 
-        classifier.client.chat.completions.create = Mock(
-            return_value=mock_response
-        )
+        self._setup_mock_client(classifier, mock_response)
 
         with pytest.raises(AIServiceError, match="Failed to parse"):
             classifier.classify("Some text")
 
-    def test_classify_api_error(self, classifier):
-        """Test handling of API error."""
-        classifier.client.chat.completions.create = Mock(
-            side_effect=Exception("API Error")
-        )
+    def test_classify_api_error_uses_fallback(self, classifier):
+        """Test that API error triggers fallback (no AIServiceError raised)."""
+        mock_client = Mock()
+        mock_client.chat.completions.create = Mock(side_effect=Exception("API Error"))
+        classifier._client = mock_client
 
-        with pytest.raises(AIServiceError, match="Intent classification failed"):
-            classifier.classify("Some text")
+        result = classifier.classify("I need to book a plumber")
+        # Should fall back to keyword matching, not raise
+        assert result.intent in (IntentType.BOOKING, IntentType.OTHER)
 
     def test_all_intent_types_defined(self):
         """Test that all required intent types are defined."""
@@ -312,7 +284,7 @@ class TestIntentClassificationTask:
         # Mock classifier
         mock_classifier = Mock()
         mock_result = Mock()
-        mock_result.intent.value = "booking"
+        mock_result.intent = IntentType.BOOKING
         mock_result.confidence = 0.95
         mock_result.reasoning = "Customer wants to book"
         mock_classifier.classify.return_value = mock_result

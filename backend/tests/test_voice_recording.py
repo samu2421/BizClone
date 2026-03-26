@@ -89,13 +89,14 @@ class TestAudioHandler:
     """Test AudioHandler service."""
     
     def test_generate_filename(self):
-        """Test filename generation."""
+        """Test filename generation uses timestamp format for tracking."""
+        import re
         handler = AudioHandler()
         call_sid = "test_call_123"
         
         filename = handler.generate_filename(call_sid, ".wav")
-        
-        assert call_sid in filename
+        # Format: YYYYMMDD_HHMMSS_microseconds.wav (e.g. 20260314_234011_823491.wav)
+        assert re.match(r"\d{8}_\d{6}_\d+\.wav$", filename)
         assert filename.endswith(".wav")
     
     def test_validate_audio_file_valid(self, sample_audio_wav):

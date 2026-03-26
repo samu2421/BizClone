@@ -280,41 +280,42 @@ async def handle_recording(
                 }
             )
 
-        # Queue transcription task
+        # Queue transcription task only when we have local audio file
         try:
-            # Get call from database to get call_id
-            call = get_call_by_sid(db, call_sid=CallSid)
-            if call:
-                task = transcribe_audio_task.delay(
-                    call_id=str(call.id),
-                    audio_file_path=local_file_path
-                )
+            if local_file_path:
+                call = get_call_by_sid(db, call_sid=CallSid)
+                if call:
+                    task = transcribe_audio_task.delay(
+                        call_id=str(call.id),
+                        audio_file_path=local_file_path
+                    )
 
-                logger.info(
-                    "transcription_task_queued",
-                    call_sid=CallSid,
-                    call_id=str(call.id),
-                    task_id=task.id,
-                    local_file_path=local_file_path
-                )
+                    logger.info(
+                        "transcription_task_queued",
+                        call_sid=CallSid,
+                        call_id=str(call.id),
+                        task_id=task.id,
+                        local_file_path=local_file_path
+                    )
 
-                # Create event for task queued
-                create_call_event(
-                    db,
-                    call_id=call.id,
-                    event_type="transcription_queued",
-                    description="Transcription task queued for processing",
-                    event_data={
-                        "task_id": task.id,
-                        "audio_file_path": local_file_path,
-                        "recording_sid": RecordingSid
-                    }
-                )
+                    # Create event for task queued
+                    create_call_event(
+                        db,
+                        call_id=call.id,
+                        event_type="transcription_queued",
+                        description="Transcription task queued for processing",
+                        event_data={
+                            "task_id": task.id,
+                            "audio_file_path": local_file_path,
+                            "recording_sid": RecordingSid
+                        }
+                    )
             else:
                 logger.warning(
-                    "call_not_found_for_transcription",
+                    "transcription_skipped_no_local_file",
                     call_sid=CallSid,
-                    recording_sid=RecordingSid
+                    recording_sid=RecordingSid,
+                    reason="Recording download failed, no local file to transcribe"
                 )
         except Exception as queue_exc:
             logger.error(

@@ -1,6 +1,8 @@
 """
 Celery application configuration for background task processing.
 """
+import sys
+
 from celery import Celery
 from app.config.settings import settings
 from app.core.logging import get_logger
@@ -14,6 +16,12 @@ celery_app = Celery(
     backend=settings.celery_result_backend,
     include=["app.workers.tasks"]
 )
+
+# On macOS, prefork + Whisper/PyTorch triggers objc_initializeAfterForkError
+# (ObjC runtime crashes when forked process uses NSCharacterSet, etc.)
+# Use 'solo' pool to avoid forking; tasks run in main process.
+_IS_MACOS = sys.platform == "darwin"
+_WORKER_POOL = "solo" if _IS_MACOS else "prefork"
 
 # Configure Celery
 celery_app.conf.update(
@@ -30,17 +38,18 @@ celery_app.conf.update(
     task_acks_late=True,  # Acknowledge task after completion
     task_reject_on_worker_lost=True,  # Reject task if worker dies
     result_expires=3600,  # Results expire after 1 hour
+    broker_connection_retry_on_startup=True,  # Retry broker connection on startup (Celery 6+)
+    worker_pool=_WORKER_POOL,  # solo on macOS to avoid fork+ObjC crash; prefork on Linux
 )
 
-# Task routing
-celery_app.conf.task_routes = {
-    "app.workers.tasks.transcribe_audio_task": {"queue": "transcription"},
-    "app.workers.tasks.process_transcript_task": {"queue": "processing"},
-}
+# All tasks use default "celery" queue - worker consumes from it.
+# Custom routing removed to avoid tasks being sent to unmonitored queues.
 
 logger.info(
     "celery_app_configured",
     broker=settings.celery_broker_url,
-    backend=settings.celery_result_backend
+    backend=settings.celery_result_backend,
+    worker_pool=_WORKER_POOL,
+    platform=sys.platform,
 )
 

@@ -59,8 +59,15 @@ class Appointment(Base):
     )
     
     # Appointment Details
+    # values_callable ensures PostgreSQL receives enum values ('pending') not names ('PENDING')
     status = Column(
-        SQLEnum(AppointmentStatus),
+        SQLEnum(
+            AppointmentStatus,
+            values_callable=lambda obj: [e.value for e in obj],
+            name="appointmentstatus",
+            create_constraint=False,
+            create_type=False,
+        ),
         default=AppointmentStatus.PENDING,
         nullable=False
     )
@@ -88,8 +95,15 @@ class Appointment(Base):
     service_description = Column(Text, nullable=True)  # "fix my leaking sink"
     
     # Urgency
+    # values_callable ensures PostgreSQL receives enum values ('medium') not names ('MEDIUM')
     urgency = Column(
-        SQLEnum(UrgencyLevel),
+        SQLEnum(
+            UrgencyLevel,
+            values_callable=lambda obj: [e.value for e in obj],
+            name="urgencylevel",
+            create_constraint=False,
+            create_type=False,
+        ),
         default=UrgencyLevel.MEDIUM,
         nullable=False
     )

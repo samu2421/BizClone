@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from app.config.settings import settings
 from app.core.logging import get_logger
 from app.core.middleware import setup_middleware
-from app.api import health, twilio_webhooks, n8n_webhooks, calendar
+from app.api import health, twilio_webhooks, n8n_webhooks, calendar, system
 from app.core.business_data_loader import load_business_data
 from app.db.session import SessionLocal
 
@@ -78,6 +78,7 @@ app.include_router(health.router)
 app.include_router(twilio_webhooks.router)
 app.include_router(n8n_webhooks.router)
 app.include_router(calendar.router)
+app.include_router(system.router)
 
 
 @app.get("/", include_in_schema=False)

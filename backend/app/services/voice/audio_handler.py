@@ -2,7 +2,6 @@
 Audio file handler for storing and managing voice recordings.
 """
 import os
-import uuid
 from pathlib import Path
 from typing import Optional, Tuple
 from datetime import datetime
@@ -25,6 +24,8 @@ SUPPORTED_FORMATS = {
     'audio/webm': '.webm',
     'audio/flac': '.flac',
     'audio/x-m4a': '.m4a',
+    'audio/raw': '.raw',
+    'application/octet-stream': '.raw',  # Fallback for raw/binary uploads
 }
 
 # Maximum file size: 50MB
@@ -60,18 +61,21 @@ class AudioHandler:
         extension: str = '.wav'
     ) -> str:
         """
-        Generate a unique filename for a recording.
-        
+        Generate a unique timestamp-based filename for a recording.
+
+        Format: YYYYMMDD_HHMMSS_microseconds.wav
+        Example: 20260314_234011_823491.wav
+        (microseconds prevent collisions when multiple recordings in same second)
+
         Args:
-            call_sid: Call session ID
+            call_sid: Call session ID (unused in filename; kept for API compatibility)
             extension: File extension (e.g., '.wav')
-        
+
         Returns:
             str: Generated filename
         """
-        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-        filename = f"{call_sid}_{timestamp}{extension}"
-        return filename
+        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S_%f')
+        return f"{timestamp}{extension}"
     
     def validate_audio_file(
         self,

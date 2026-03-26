@@ -219,5 +219,25 @@ tail -f logs/bizclone.log
 
 ---
 
+## 🔧 Stabilization (Week 1–3)
+
+**Date:** 2026-03-13
+
+### PostgreSQL ENUM fixes
+- **Conversation state:** `conversationstatus` and `conversationstate` in PostgreSQL use **lowercase** values. The Python enums already had lowercase `.value`s; SQLAlchemy was sending enum **names** (e.g. `ACTIVE`) and causing `invalid input value for enum conversationstatus: "ACTIVE"`.
+- **Fix:** In `backend/app/models/conversation_state.py`, `status`, `current_state`, and `previous_state` now use `SQLEnum(..., values_callable=lambda obj: [e.value for e in obj], name="conversationstatus"|"conversationstate", create_constraint=False, create_type=False)` so the DB receives `'active'`, `'collecting_info'`, etc. No new migration required; existing DB enums are already lowercase.
+- **CRUD:** In `backend/app/db/crud.py`, `create_conversation_state` and `update_conversation_state` normalize string `status`/`current_state`/`previous_state` to lowercase via `_normalize_enum_str()` for consistency.
+
+### Celery worker resilience
+- In `backend/app/workers/tasks.py`, every task that uses the DB now calls `db.rollback()` in its main `except` block (inside a try/except so rollback failure doesn’t crash the worker), then logs and returns an error dict (or re-raises for retriable tasks). Workers stay alive on DB errors.
+- Tasks updated: `classify_intent_task`, `extract_entities_task`, `detect_priority_task`, `schedule_appointment_task`. (`transcribe_audio_task` already had rollback.)
+
+### Verification
+- **Pipeline:** recording → transcription → intent → entity extraction → appointment creation → conversation state.
+- **No migration commands** are needed for this stabilization; only code changes above.
+- To verify: run a full call flow (ingest recording, run transcribe → classify_intent → extract_entities); confirm no enum errors and that conversation state rows are created with lowercase status/state values.
+
+---
+
 **Status:** Week 1-3 COMPLETE! Ready for Week 4 (Escalation & Notifications)
 

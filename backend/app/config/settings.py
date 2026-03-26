@@ -54,11 +54,15 @@ class Settings(BaseSettings):
     twilio_phone_number: str = Field(default="", alias="TWILIO_PHONE_NUMBER")
     twilio_webhook_base_url: str = Field(default="", alias="TWILIO_WEBHOOK_BASE_URL")
     
-    # OpenAI Configuration
+    # OpenAI Configuration (used for entity extraction, RAG)
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
     openai_max_tokens: int = Field(default=500, alias="OPENAI_MAX_TOKENS")
     openai_temperature: float = Field(default=0.7, alias="OPENAI_TEMPERATURE")
+
+    # Groq Configuration (low-cost intent classification)
+    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
+    groq_model: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL")
     
     # ElevenLabs Configuration
     elevenlabs_api_key: str = Field(default="", alias="ELEVENLABS_API_KEY")
@@ -92,6 +96,12 @@ class Settings(BaseSettings):
     emergency_phone: str = Field(default="", alias="EMERGENCY_PHONE")
     emergency_keywords: str = Field(default="leak,flooding,burst,emergency,urgent,water everywhere", alias="EMERGENCY_KEYWORDS")
     
+    # Google Calendar (optional; leave empty to skip calendar integration)
+    google_credentials_file: str = Field(
+        default="",
+        alias="GOOGLE_CREDENTIALS_FILE"
+    )
+
     # File Storage
     recordings_dir: str = Field(default="./data/recordings", alias="RECORDINGS_DIR")
     transcripts_dir: str = Field(default="./data/transcripts", alias="TRANSCRIPTS_DIR")

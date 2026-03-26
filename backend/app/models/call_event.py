@@ -44,7 +44,7 @@ class CallEvent(Base):
     )
     
     # Relationships
-    call = relationship("Call", back_populates="events", lazy="select", repr=False)
+    call = relationship("Call", back_populates="events", lazy="select")
     
     def __repr__(self):
         return f"<CallEvent(id={self.id}, call_id={self.call_id}, event_type={self.event_type})>"

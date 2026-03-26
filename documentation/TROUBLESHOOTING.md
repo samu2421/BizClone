@@ -163,6 +163,55 @@ celery -A app.workers.celery_app worker --loglevel=debug
 
 ---
 
+## 🔴 macOS: Worker Crashes with objc_initializeAfterForkError / SIGABRT
+
+### Problem
+On macOS, Celery workers crash with:
+```
+objc[PID]: +[NSCharacterSet initialize] may have been in progress in another thread when fork() was called.
+Process 'ForkPoolWorker-X' pid:XXXXX exited with 'signal 6 (SIGABRT)'
+WorkerLostError: Worker exited prematurely
+```
+
+### Cause
+Whisper (via PyTorch) loads Apple's Objective-C runtime. Celery's default prefork pool forks worker processes; forked children inherit a partially-initialized ObjC state and crash.
+
+### Solution
+The app automatically uses the **solo** pool on macOS (no forking). Restart the Celery worker—it should work without changes.
+
+If you need prefork (e.g. on Linux, or for concurrency), the worker uses `prefork` on non-macOS platforms.
+
+**Alternative:** To force prefork on macOS (not recommended):
+```bash
+export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
+celery -A app.workers.celery_app worker --loglevel=info --pool=prefork
+```
+
+---
+
+## 🔴 OpenAI 429 Quota Exceeded / Rate Limit
+
+### Problem
+```
+Error code: 429 - You exceeded your current quota, please check your plan and billing details.
+openai.RateLimitError / insufficient_quota
+```
+
+### Cause
+OpenAI account has exhausted its quota (free tier limit or billing issue).
+
+### Solution
+1. **Check billing:** [OpenAI Platform Billing](https://platform.openai.com/account/billing)
+2. **Add payment method** if on free tier
+3. **Fallback behavior:** The system automatically uses keyword-based classification when the API fails. The pipeline continues (intent + entity extraction use rule-based fallbacks), but results are less accurate than when using the API.
+
+### Fallback Details
+- **Intent classification:** Keyword matching (emergency, booking, pricing, etc.)
+- **Entity extraction:** Minimal extraction (urgency from keywords, service description from transcript)
+- Pipeline continues to scheduling; appointments are created with available data.
+
+---
+
 ## 🔴 OpenAI API Key Error
 
 ### Problem

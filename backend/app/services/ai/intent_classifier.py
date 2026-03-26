@@ -1,11 +1,11 @@
 """
-Intent classification service using GPT-4o-mini for understanding customer needs.
+Intent classification service using Groq API (low-cost) for understanding customer needs.
+Falls back to keyword-based classification when Groq API is unavailable.
 """
+import re
+import json
 from typing import Dict, Any, Optional
 from enum import Enum
-import json
-
-from openai import OpenAI
 
 from app.config.settings import settings
 from app.core.logging import get_logger
@@ -28,7 +28,7 @@ class IntentType(str, Enum):
 
 class IntentClassificationResult:
     """Result of intent classification."""
-    
+
     def __init__(
         self,
         intent: IntentType,
@@ -42,24 +42,41 @@ class IntentClassificationResult:
         self.raw_response = raw_response
 
 
-class IntentClassifier:
-    """Service for classifying customer intent using GPT-4o-mini."""
-    
-    # Few-shot examples for better classification
-    FEW_SHOT_EXAMPLES = """
-Examples:
+# Keywords for fallback when Groq API is unavailable
+_FALLBACK_INTENT_PATTERNS = [
+    (IntentType.EMERGENCY, re.compile(
+        r"\b(flooding|flooded|flood|burst\s*pipe|water\s*everywhere|"
+        r"gas\s*leak|sewage|emergency|urgent|asap|immediately|"
+        r"right\s*now|disaster|water\s*pouring)\b", re.I
+    )),
+    (IntentType.CANCEL, re.compile(
+        r"\b(cancel|cancellation|cancelled|need\s*to\s*cancel|"
+        r"won't\s*make\s*it|can't\s*come)\b", re.I
+    )),
+    (IntentType.RESCHEDULE, re.compile(
+        r"\b(reschedule|rescheduling|change\s*appointment|"
+        r"move\s*appointment|different\s*time|different\s*day)\b", re.I
+    )),
+    (IntentType.PRICING, re.compile(
+        r"\b(how\s*much|price|cost|costs|charge|charging|"
+        r"rate|rates|fee|fees|estimate|quote|pricing)\b", re.I
+    )),
+    (IntentType.AVAILABILITY, re.compile(
+        r"\b(available|availability|when\s*are\s*you|open\s*today|"
+        r"hours|hours\s*of\s*operation|this\s*weekend|weekend)\b", re.I
+    )),
+    (IntentType.SERVICE_QUESTION, re.compile(
+        r"\b(what\s*services|do\s*you\s*offer|offer|types\s*of|"
+        r"kind\s*of\s*work|plumbing\s*services)\b", re.I
+    )),
+    (IntentType.BOOKING, re.compile(
+        r"\b(book|booking|schedule|scheduled|appointment|"
+        r"come\s*out|send\s*someone|fix\s*my|repair|"
+        r"need\s*a\s*plumber|plumber\s*to)\b", re.I
+    )),
+]
 
-1. "Hi, I need to schedule a plumber to fix my sink" -> booking (confidence: 0.95)
-2. "Can I reschedule my appointment from tomorrow to next week?" -> reschedule (confidence: 0.98)
-3. "I need to cancel my appointment for Friday" -> cancel (confidence: 0.97)
-4. "How much do you charge for fixing a leaky faucet?" -> pricing (confidence: 0.92)
-5. "Are you available this weekend?" -> availability (confidence: 0.90)
-6. "What kind of plumbing services do you offer?" -> service_question (confidence: 0.93)
-7. "HELP! My basement is flooding! Water everywhere!" -> emergency (confidence: 0.99)
-8. "Just calling to say thanks for the great service" -> other (confidence: 0.85)
-"""
-    
-    SYSTEM_PROMPT = f"""You are an AI assistant that classifies customer intent for a plumbing business.
+SYSTEM_PROMPT = """You are an AI assistant that classifies customer intent for a plumbing business.
 
 Classify the customer's message into ONE of these categories:
 - booking: Customer wants to schedule a new appointment
@@ -71,75 +88,103 @@ Classify the customer's message into ONE of these categories:
 - emergency: Customer has an urgent plumbing emergency (leak, flood, burst pipe, etc.)
 - other: Anything else (greetings, thanks, complaints, etc.)
 
-{FEW_SHOT_EXAMPLES}
-
 Respond with ONLY a JSON object in this exact format:
-{{"intent": "category_name", "confidence": 0.95, "reasoning": "brief explanation"}}
+{"intent": "category_name", "confidence": 0.95, "reasoning": "brief explanation"}
 
 Be concise and accurate. Confidence should be 0.0-1.0."""
-    
+
+
+class IntentClassifier:
+    """Service for classifying customer intent using Groq API (low-cost)."""
+
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
-        """
-        Initialize intent classifier.
-        
-        Args:
-            api_key: OpenAI API key (defaults to settings)
-            model: Model to use (defaults to gpt-4o-mini)
-        """
-        self.api_key = api_key or settings.openai_api_key
-        self.model = model or "gpt-4o-mini"
-        self.client = OpenAI(api_key=self.api_key)
-        
+        self.api_key = api_key or settings.groq_api_key
+        self.model = model or settings.groq_model
+        self._client = None
         logger.info(
             "intent_classifier_initialized",
-            model=self.model
+            model=self.model,
+            provider="groq"
         )
-    
+
+    def _get_client(self):
+        """Lazy-initialize Groq client."""
+        if self._client is None:
+            try:
+                from groq import Groq
+                self._client = Groq(api_key=self.api_key)
+            except ImportError as exc:
+                raise AIServiceError(
+                    "Groq SDK not installed. Run: pip install groq"
+                ) from exc
+        return self._client
+
+    def _classify_fallback(self, text: str) -> IntentClassificationResult:
+        """Keyword-based fallback when Groq API is unavailable."""
+        text_lower = text.lower().strip()
+        for intent, pattern in _FALLBACK_INTENT_PATTERNS:
+            if pattern.search(text_lower):
+                logger.info(
+                    "intent_classification_fallback_used",
+                    intent=intent.value,
+                    reason="Groq API unavailable"
+                )
+                return IntentClassificationResult(
+                    intent=intent,
+                    confidence=0.75,
+                    reasoning="Fallback: keyword match (Groq API unavailable)",
+                    raw_response={"source": "fallback", "intent": intent.value}
+                )
+        return IntentClassificationResult(
+            intent=IntentType.OTHER,
+            confidence=0.5,
+            reasoning="Fallback: no keyword match (Groq API unavailable)",
+            raw_response={"source": "fallback", "intent": "other"}
+        )
+
     def classify(self, text: str) -> IntentClassificationResult:
         """
-        Classify customer intent from text.
-        
+        Classify customer intent from text using Groq API.
+
         Args:
             text: Customer message or transcript
-        
+
         Returns:
             IntentClassificationResult: Classification result with confidence
-        
-        Raises:
-            AIServiceError: If classification fails
         """
         if not text or not text.strip():
             raise AIServiceError("Cannot classify empty text")
-        
+
         logger.info(
             "intent_classification_started",
             text_length=len(text),
             text_preview=text[:100]
         )
-        
+
+        # Use keyword fallback if no Groq API key
+        if not self.api_key or not self.api_key.strip():
+            logger.warning("groq_api_key_not_configured_using_fallback")
+            return self._classify_fallback(text)
+
         try:
-            # Call GPT-4o-mini
-            response = self.client.chat.completions.create(
+            client = self._get_client()
+            response = client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": self.SYSTEM_PROMPT},
+                    {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": f"Classify this message:\n\n{text}"}
                 ],
-                temperature=0.3,  # Lower temperature for more consistent results
+                temperature=0.3,
                 max_tokens=150,
-                response_format={"type": "json_object"}
             )
-            
-            # Parse response
+
             content = response.choices[0].message.content
             result_data = json.loads(content)
-            
-            # Extract intent and confidence
+
             intent_str = result_data.get("intent", "other")
             confidence = float(result_data.get("confidence", 0.5))
             reasoning = result_data.get("reasoning", "")
-            
-            # Validate intent
+
             try:
                 intent = IntentType(intent_str)
             except ValueError:
@@ -149,26 +194,25 @@ Be concise and accurate. Confidence should be 0.0-1.0."""
                     defaulting_to="other"
                 )
                 intent = IntentType.OTHER
-            
-            # Clamp confidence to 0-1
+
             confidence = max(0.0, min(1.0, confidence))
-            
+
             result = IntentClassificationResult(
                 intent=intent,
                 confidence=confidence,
                 reasoning=reasoning,
                 raw_response=result_data
             )
-            
+
             logger.info(
                 "intent_classification_completed",
                 intent=intent.value,
                 confidence=confidence,
                 reasoning=reasoning
             )
-            
+
             return result
-            
+
         except json.JSONDecodeError as exc:
             logger.error(
                 "intent_classification_json_error",
@@ -177,12 +221,11 @@ Be concise and accurate. Confidence should be 0.0-1.0."""
                 exc_info=True
             )
             raise AIServiceError(f"Failed to parse classification response: {str(exc)}")
-            
-        except Exception as exc:
-            logger.error(
-                "intent_classification_failed",
-                error=str(exc),
-                exc_info=True
-            )
-            raise AIServiceError(f"Intent classification failed: {str(exc)}")
 
+        except Exception as exc:
+            logger.warning(
+                "groq_api_error_using_fallback",
+                error=str(exc),
+                error_type=type(exc).__name__
+            )
+            return self._classify_fallback(text)

@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # Import settings and models
 from app.config.settings import settings
 from app.db.base import Base
-from app.models import Customer, Call, Transcript, CallEvent  # noqa
+from app.models import Customer, Call, Transcript, CallEvent, Record  # noqa
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

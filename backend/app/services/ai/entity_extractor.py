@@ -1,17 +1,26 @@
 """
 Entity extraction service using GPT-4o-mini for extracting structured data.
+Falls back to keyword-based extraction when OpenAI API is unavailable.
 """
+import re
 from typing import Dict, Any, Optional
 from datetime import datetime
 import json
 
 from openai import OpenAI
+from openai import RateLimitError, APIError
 
 from app.config.settings import settings
 from app.core.logging import get_logger
 from app.core.exceptions import AIServiceError
 
 logger = get_logger(__name__)
+
+# Keywords for fallback urgency detection
+_FALLBACK_EMERGENCY_WORDS = re.compile(
+    r"\b(flooding|flood|burst|emergency|urgent|immediately|right\s*now|"
+    r"water\s*everywhere|gas\s*leak|sewage)\b", re.I
+)
 
 
 class ExtractedEntities:
@@ -116,6 +125,34 @@ Example:
             "entity_extractor_initialized",
             model=self.model
         )
+
+    def _extract_fallback(self, text: str) -> ExtractedEntities:
+        """Minimal extraction when OpenAI API is unavailable."""
+        urgency = "emergency" if _FALLBACK_EMERGENCY_WORDS.search(text) else "medium"
+        service_type = "emergency_leak" if urgency == "emergency" else "general_plumbing"
+        logger.info(
+            "entity_extraction_fallback_used",
+            urgency=urgency,
+            reason="OpenAI API unavailable"
+        )
+        return ExtractedEntities({
+            "date_time_text": None,
+            "requested_date": None,
+            "requested_time": None,
+            "address": None,
+            "city": None,
+            "state": None,
+            "zip_code": None,
+            "location_text": None,
+            "service_type": service_type,
+            "service_description": text[:300] + ("..." if len(text) > 300 else ""),
+            "urgency": urgency,
+            "urgency_reason": "Fallback: keyword detection (API unavailable)" if urgency == "emergency" else None,
+            "contact_phone": None,
+            "contact_email": None,
+            "contact_name": None,
+            "notes": "Extracted via fallback (OpenAI API unavailable)",
+        })
     
     def extract(self, text: str, context: Optional[Dict[str, Any]] = None) -> ExtractedEntities:
         """
@@ -182,6 +219,14 @@ Example:
                 exc_info=True
             )
             raise AIServiceError(f"Failed to parse extraction response: {str(exc)}")
+
+        except (RateLimitError, APIError) as exc:
+            logger.warning(
+                "openai_api_unavailable_using_fallback",
+                error=str(exc),
+                error_type=type(exc).__name__
+            )
+            return self._extract_fallback(text)
             
         except Exception as exc:
             logger.error(

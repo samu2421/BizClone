@@ -14,6 +14,7 @@ from .conversation_state import (
 from app.models.service import Service
 from app.models.policy import Policy
 from app.models.faq import FAQ
+from app.models.record import Record
 
 __all__ = [
     "Customer",
@@ -31,4 +32,5 @@ __all__ = [
     "Service",
     "Policy",
     "FAQ",
+    "Record",
 ]

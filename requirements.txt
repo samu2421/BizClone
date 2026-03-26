@@ -15,6 +15,7 @@ celery==5.3.6
 
 # AI & ML
 openai==1.10.0
+groq>=0.4.0
 chromadb==0.4.22
 sentence-transformers==2.3.1
 tiktoken==0.5.2
@@ -32,6 +33,11 @@ torchaudio>=2.0.0
 
 # Twilio
 twilio==8.11.1
+
+# Google Calendar
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
 
 # HTTP & Async
 httpx==0.26.0

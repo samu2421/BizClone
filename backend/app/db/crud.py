@@ -10,7 +10,7 @@ from app.models import (
     Customer, Call, Transcript, CallEvent, CallStatus, CallDirection,
     Appointment, AppointmentStatus, UrgencyLevel,
     ConversationStateModel, ConversationStatus, ConversationState,
-    Service, Policy, FAQ
+    Service, Policy, FAQ, Record
 )
 from app.core.logging import get_logger
 
@@ -97,7 +97,7 @@ def create_call(
     direction: CallDirection,
     **kwargs
 ) -> Call:
-    """Create a new call record."""
+    """Create a new call record and audit entry."""
     call = Call(
         call_sid=call_sid,
         customer_id=customer_id,
@@ -109,6 +109,26 @@ def create_call(
     db.add(call)
     db.commit()
     db.refresh(call)
+
+    # Create audit record
+    try:
+        create_record(
+            db,
+            record_type="call",
+            entity_id=str(call.id),
+            entity_type="call",
+            payload={
+                "call_sid": call_sid,
+                "customer_id": customer_id,
+                "from_number": from_number,
+                "to_number": to_number,
+                "direction": direction.value if hasattr(direction, "value") else str(direction),
+            },
+            summary=f"Call from {from_number} to {to_number}",
+        )
+    except Exception as audit_exc:
+        logger.warning("audit_record_creation_failed", call_id=call.id, error=str(audit_exc))
+
     logger.info("call_created", call_id=call.id, call_sid=call_sid)
     return call
 
@@ -141,6 +161,16 @@ def update_call_by_sid(db: Session, call_sid: str, **kwargs) -> Optional[Call]:
     return call
 
 
+def list_calls(db: Session, limit: int = 100) -> List[Call]:
+    """List recent calls for API visibility."""
+    return (
+        db.query(Call)
+        .order_by(desc(Call.created_at))
+        .limit(limit)
+        .all()
+    )
+
+
 def get_customer_calls(
     db: Session,
     customer_id: str,
@@ -167,7 +197,7 @@ def create_transcript(
     language: str = "en",
     **kwargs
 ) -> Transcript:
-    """Create a new transcript."""
+    """Create a new transcript and audit entry."""
     transcript = Transcript(
         call_id=call_id,
         text=text,
@@ -177,6 +207,29 @@ def create_transcript(
     db.add(transcript)
     db.commit()
     db.refresh(transcript)
+
+    # Create audit record
+    try:
+        create_record(
+            db,
+            record_type="transcript",
+            entity_id=str(transcript.id),
+            entity_type="transcript",
+            payload={
+                "call_id": call_id,
+                "language": language,
+                "text_preview": text[:200] + "..." if len(text) > 200 else text,
+            },
+            summary=f"Transcript for call {call_id} ({language})",
+        )
+    except Exception as audit_exc:
+        logger.warning(
+            "audit_record_creation_failed",
+            transcript_id=transcript.id,
+            call_id=call_id,
+            error=str(audit_exc)
+        )
+
     logger.info("transcript_created", transcript_id=transcript.id, call_id=call_id)
     return transcript
 
@@ -184,6 +237,16 @@ def create_transcript(
 def get_transcript_by_call_id(db: Session, call_id: str) -> Optional[Transcript]:
     """Get transcript for a call."""
     return db.query(Transcript).filter(Transcript.call_id == call_id).first()
+
+
+def list_transcripts(db: Session, limit: int = 100) -> List[Transcript]:
+    """List recent transcripts for API visibility."""
+    return (
+        db.query(Transcript)
+        .order_by(desc(Transcript.created_at))
+        .limit(limit)
+        .all()
+    )
 
 
 # ============================================================================
@@ -197,7 +260,7 @@ def create_call_event(
     description: Optional[str] = None,
     event_data: Optional[dict] = None
 ) -> CallEvent:
-    """Create a new call event."""
+    """Create a new call event and corresponding audit record."""
     event = CallEvent(
         call_id=call_id,
         event_type=event_type,
@@ -207,6 +270,26 @@ def create_call_event(
     db.add(event)
     db.commit()
     db.refresh(event)
+
+    # Create audit record for history tracking (records are never auto-deleted)
+    try:
+        create_record(
+            db,
+            record_type="event",
+            entity_id=call_id,
+            entity_type="call",
+            payload={"event_type": event_type, "event_data": event_data},
+            summary=description,
+        )
+    except Exception as audit_exc:
+        logger.warning(
+            "audit_record_creation_failed",
+            event_id=event.id,
+            call_id=call_id,
+            error=str(audit_exc)
+        )
+        # Don't fail the event creation if audit record fails
+
     logger.info("call_event_created", event_id=event.id, call_id=call_id, event_type=event_type)
     return event
 
@@ -225,13 +308,25 @@ def get_call_events(db: Session, call_id: str) -> List[CallEvent]:
 # Appointment CRUD Operations
 # ============================================================================
 
+def _normalize_enum_str(value: str) -> str:
+    """Normalize string to lowercase; PostgreSQL enums expect lowercase values."""
+    return value.lower() if isinstance(value, str) else value
+
+
 def create_appointment(
     db: Session,
     call_id: str,
     customer_id: str,
     **kwargs
 ) -> Appointment:
-    """Create a new appointment."""
+    """Create a new appointment and audit record."""
+    # Normalize status/urgency to lowercase for PostgreSQL enum compatibility
+    if "status" in kwargs and isinstance(kwargs["status"], str):
+        kwargs["status"] = _normalize_enum_str(kwargs["status"])
+    if "urgency" in kwargs and isinstance(kwargs["urgency"], str):
+        kwargs["urgency"] = _normalize_enum_str(kwargs["urgency"])
+
+
     appointment = Appointment(
         call_id=call_id,
         customer_id=customer_id,
@@ -240,6 +335,31 @@ def create_appointment(
     db.add(appointment)
     db.commit()
     db.refresh(appointment)
+
+    # Create audit record for history tracking
+    try:
+        create_record(
+            db,
+            record_type="appointment",
+            entity_id=str(appointment.id),
+            entity_type="appointment",
+            payload={
+                "call_id": call_id,
+                "customer_id": customer_id,
+                "service_type": kwargs.get("service_type"),
+                "urgency": kwargs.get("urgency"),
+                "requested_date": str(kwargs.get("requested_date")) if kwargs.get("requested_date") else None,
+            },
+            summary=f"Appointment created for call {call_id}",
+        )
+    except Exception as audit_exc:
+        logger.warning(
+            "audit_record_creation_failed",
+            appointment_id=appointment.id,
+            call_id=call_id,
+            error=str(audit_exc)
+        )
+
     logger.info(
         "appointment_created",
         appointment_id=appointment.id,
@@ -273,6 +393,16 @@ def get_customer_appointments(
     )
 
 
+def list_appointments(db: Session, limit: int = 100) -> List[Appointment]:
+    """List recent appointments for API visibility."""
+    return (
+        db.query(Appointment)
+        .order_by(desc(Appointment.created_at))
+        .limit(limit)
+        .all()
+    )
+
+
 def get_appointments_by_date_range(
     db: Session,
     start_date: datetime,
@@ -296,6 +426,12 @@ def update_appointment(
     **kwargs
 ) -> Optional[Appointment]:
     """Update appointment information."""
+    # Normalize status/urgency to lowercase for PostgreSQL enum compatibility
+    if "status" in kwargs and isinstance(kwargs["status"], str):
+        kwargs["status"] = _normalize_enum_str(kwargs["status"])
+    if "urgency" in kwargs and isinstance(kwargs["urgency"], str):
+        kwargs["urgency"] = _normalize_enum_str(kwargs["urgency"])
+
     appointment = get_appointment_by_id(db, appointment_id)
     if appointment:
         for key, value in kwargs.items():
@@ -318,6 +454,11 @@ def create_conversation_state(
     **kwargs
 ) -> ConversationStateModel:
     """Create a new conversation state."""
+    # Normalize enum-like strings to lowercase for PostgreSQL
+    for key in ("status", "current_state", "previous_state"):
+        if key in kwargs and isinstance(kwargs[key], str):
+            kwargs[key] = _normalize_enum_str(kwargs[key])
+
     conversation = ConversationStateModel(
         call_id=call_id,
         customer_id=customer_id,
@@ -326,6 +467,34 @@ def create_conversation_state(
     db.add(conversation)
     db.commit()
     db.refresh(conversation)
+
+    # Audit record for event log
+    try:
+        status_val = getattr(conversation.status, "value", str(conversation.status))
+        state_val = getattr(
+            conversation.current_state, "value", str(conversation.current_state)
+        )
+        create_record(
+            db,
+            record_type="conversation_state",
+            entity_id=str(conversation.id),
+            entity_type="conversation_state",
+            payload={
+                "call_id": call_id,
+                "customer_id": customer_id,
+                "status": status_val,
+                "current_state": state_val,
+            },
+            summary=f"Conversation state created for call {call_id}",
+        )
+    except Exception as audit_exc:
+        logger.warning(
+            "audit_record_creation_failed",
+            conversation_id=conversation.id,
+            call_id=call_id,
+            error=str(audit_exc)
+        )
+
     logger.info(
         "conversation_state_created",
         conversation_id=conversation.id,
@@ -354,6 +523,19 @@ def get_conversation_state_by_call_id(
     ).first()
 
 
+def list_conversation_states(
+    db: Session,
+    limit: int = 100
+) -> List[ConversationStateModel]:
+    """List recent conversation states for API visibility."""
+    return (
+        db.query(ConversationStateModel)
+        .order_by(desc(ConversationStateModel.updated_at))
+        .limit(limit)
+        .all()
+    )
+
+
 def get_active_conversations(
     db: Session,
     limit: int = 100
@@ -374,6 +556,10 @@ def update_conversation_state(
     **kwargs
 ) -> Optional[ConversationStateModel]:
     """Update conversation state."""
+    for key in ("status", "current_state", "previous_state"):
+        if key in kwargs and isinstance(kwargs[key], str):
+            kwargs[key] = _normalize_enum_str(kwargs[key])
+
     conversation = get_conversation_state_by_id(db, conversation_id)
     if conversation:
         for key, value in kwargs.items():
@@ -512,4 +698,83 @@ def create_or_update_faq(
     db.commit()
     db.refresh(faq)
     return faq
+
+
+# ============================================================================
+# Record CRUD Operations (Audit / History Tracking)
+# ============================================================================
+
+def create_record(
+    db: Session,
+    record_type: str,
+    entity_id: Optional[str] = None,
+    entity_type: Optional[str] = None,
+    payload: Optional[dict] = None,
+    summary: Optional[str] = None
+) -> Record:
+    """
+    Create an audit record. Records are never automatically deleted.
+
+    Args:
+        record_type: Type of record (call, transcript, event, task, etc.)
+        entity_id: ID of the source entity
+        entity_type: Type of source entity
+        payload: JSON payload with record-specific data
+        summary: Human-readable summary
+
+    Returns:
+        Record: Created record
+    """
+    record = Record(
+        record_type=record_type,
+        entity_id=entity_id,
+        entity_type=entity_type,
+        payload=payload,
+        summary=summary
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    logger.info(
+        "record_created",
+        record_id=record.id,
+        record_type=record_type,
+        entity_type=entity_type,
+        entity_id=entity_id
+    )
+    return record
+
+
+def get_records_by_entity(
+    db: Session,
+    entity_type: str,
+    entity_id: str,
+    limit: int = 100
+) -> List[Record]:
+    """Get records for a specific entity."""
+    return (
+        db.query(Record)
+        .filter(
+            Record.entity_type == entity_type,
+            Record.entity_id == entity_id
+        )
+        .order_by(desc(Record.created_at))
+        .limit(limit)
+        .all()
+    )
+
+
+def get_records_by_type(
+    db: Session,
+    record_type: str,
+    limit: int = 100
+) -> List[Record]:
+    """Get records by record type."""
+    return (
+        db.query(Record)
+        .filter(Record.record_type == record_type)
+        .order_by(desc(Record.created_at))
+        .limit(limit)
+        .all()
+    )
 

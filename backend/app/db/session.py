@@ -36,10 +36,12 @@ def receive_checkout(dbapi_conn, connection_record, connection_proxy):
 
 
 # Create session factory
+# expire_on_commit=False ensures objects remain usable after commit (e.g. in Celery tasks)
 SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
     bind=engine,
+    expire_on_commit=False,
 )
 
 
@@ -84,7 +86,7 @@ def init_db() -> None:
     Note: In production, use Alembic migrations instead.
     """
     from app.db.base import Base
-    from app.models import Customer, Call, Transcript, CallEvent  # noqa
+    from app.models import Customer, Call, Transcript, CallEvent, Record  # noqa
     
     logger.info("Initializing database...")
     Base.metadata.create_all(bind=engine)

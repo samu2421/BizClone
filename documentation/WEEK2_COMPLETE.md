@@ -161,7 +161,9 @@
 ### 1. Initialize Knowledge Base
 ```bash
 cd backend
-python -c "from app.services.rag.knowledge_base import KnowledgeBase; kb = KnowledgeBase(); kb.initialize()"
+# python -c "from app.services.rag.knowledge_base import KnowledgeBase; kb = KnowledgeBase(); kb.initialize()"
+
+python -c "from app.core.business_data_loader import load_business_data; from app.db.session import SessionLocal; db = SessionLocal(); load_business_data(db); db.close()"
 ```
 
 ### 2. Process a Recording
