@@ -890,31 +890,137 @@ def schedule_appointment_task(
                 task_id=self.request.id
             )
 
-            # Google Calendar: create event after appointment_scheduled
+            # ----------------------------------------------------------
+            # Google Calendar: conflict-free event creation
+            # ----------------------------------------------------------
             try:
                 from app.services.integrations.google_calendar import (
                     create_calendar_event as create_gcal_event,
+                    has_conflict as gcal_has_conflict,
+                    find_next_available_slot as gcal_find_slot,
+                    _get_target_calendar_id,
                 )
+
+                duration = getattr(
+                    settings, "appointment_duration_minutes", 60
+                )
+                cal_id = _get_target_calendar_id()
+                original_start = result.scheduled_time
+                final_start = original_start
+
+                # --- Conflict detection & auto-reschedule ---
+                if gcal_has_conflict(
+                    final_start, duration, calendar_id=cal_id
+                ):
+                    logger.info(
+                        "google_calendar_conflict_detected",
+                        calendar_id=cal_id,
+                        original_start=final_start.isoformat(),
+                        appointment_id=appointment_id,
+                    )
+                    new_slot = gcal_find_slot(
+                        preferred_start=final_start,
+                        duration_minutes=duration,
+                        calendar_id=cal_id,
+                    )
+                    if new_slot is not None:
+                        final_start = new_slot
+                        from datetime import timedelta as _td
+                        update_appointment(
+                            db,
+                            appointment_id=appointment_id,
+                            scheduled_time_start=final_start,
+                            scheduled_time_end=(
+                                final_start
+                                + _td(minutes=duration)
+                            ),
+                        )
+                        logger.info(
+                            "appointment_rescheduled",
+                            appointment_id=appointment_id,
+                            calendar_id=cal_id,
+                            original=original_start.isoformat(),
+                            new_start=final_start.isoformat(),
+                        )
+                    else:
+                        logger.warning(
+                            "google_calendar_no_available_slot",
+                            calendar_id=cal_id,
+                            appointment_id=appointment_id,
+                        )
+
+                # --- Build rich summary & description ---
                 service_label = (
                     (appointment.service_type or "Appointment")
                     .replace("_", " ").title()
                 )
-                customer = get_customer_by_id(db, appointment.customer_id)
+                customer = get_customer_by_id(
+                    db, appointment.customer_id
+                )
                 customer_name = (
-                    (appointment.contact_name or (customer.name if customer else None))
+                    appointment.contact_name
+                    or (
+                        customer.name if customer else None
+                    )
                     or "Customer"
                 )
                 summary = f"{service_label} – {customer_name}"
-                create_gcal_event(
-                    summary=summary,
-                    start_time=result.scheduled_time,
-                    duration_minutes=getattr(
-                        settings,
-                        "appointment_duration_minutes",
-                        60,
-                    ),
-                    description=f"Call {call_id} / Appointment {appointment_id}",
+
+                desc_parts = []
+                if appointment.contact_phone:
+                    desc_parts.append(
+                        f"Customer Phone: "
+                        f"{appointment.contact_phone}"
+                    )
+                biz_phone = getattr(
+                    settings, "business_phone", ""
                 )
+                if biz_phone:
+                    desc_parts.append(
+                        f"Business Phone: {biz_phone}"
+                    )
+                if appointment.notes:
+                    desc_parts.append(
+                        f"Notes: {appointment.notes}"
+                    )
+                if appointment.service_description:
+                    desc_parts.append(
+                        f"Service: "
+                        f"{appointment.service_description}"
+                    )
+                desc_parts.append(
+                    f"Appointment ID: {appointment_id}"
+                )
+                desc_parts.append(f"Call ID: {call_id}")
+                description = "\n".join(desc_parts)
+
+                # --- Create the event ---
+                from datetime import timedelta as _td2
+                end_start = (
+                    final_start + _td2(minutes=duration)
+                )
+                event_id = create_gcal_event(
+                    summary=summary,
+                    start_time=final_start,
+                    duration_minutes=duration,
+                    calendar_id=cal_id,
+                    description=description,
+                )
+                if event_id:
+                    logger.info(
+                        "google_calendar_event_success",
+                        event_id=event_id,
+                        calendar_id=cal_id,
+                        appointment_id=appointment_id,
+                        final_start=final_start.isoformat(),
+                        final_end=end_start.isoformat(),
+                    )
+                else:
+                    logger.warning(
+                        "google_calendar_event_returned_none",
+                        calendar_id=cal_id,
+                        appointment_id=appointment_id,
+                    )
             except Exception as gcal_exc:
                 logger.warning(
                     "google_calendar_event_skipped",

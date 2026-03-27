@@ -101,6 +101,10 @@ class Settings(BaseSettings):
         default="",
         alias="GOOGLE_CREDENTIALS_FILE"
     )
+    google_target_calendar: str = Field(
+        default="primary",
+        alias="GOOGLE_TARGET_CALENDAR"
+    )
 
     # File Storage
     recordings_dir: str = Field(default="./data/recordings", alias="RECORDINGS_DIR")
