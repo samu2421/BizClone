@@ -17,7 +17,7 @@ celery -A app.workers.celery_app worker --loglevel=info
 
 # Terminal 3: Process Recording
 cd backend && source ../venv/bin/activate
-python process_recording.py --file data/recordings/sample_call.wav
+python process_recording.py --file data/recordings/call_01.wav
 ```
 
 ---
