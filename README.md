@@ -1,306 +1,208 @@
-# BizClone — AI Voice Assistant for Plumbing Business
+# BizClone — Voice Booking Assistant for a Plumbing Business
 
-**An intelligent, automated voice assistant system for small enterprise plumbing services in Hamburg, Germany.**
+A backend that turns a customer's recorded phone message into a booked, cancelled or rescheduled appointment. It transcribes the audio locally with Whisper, classifies the caller's intent with an LLM, extracts the booking details, and updates PostgreSQL and (optionally) Google Calendar — all as a chain of Celery background tasks behind a FastAPI service.
 
-[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.109.0-green.svg)](https://fastapi.tiangolo.com/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-blue.svg)](https://www.postgresql.org/)
-[![Celery](https://img.shields.io/badge/Celery-5.3.6-green.svg)](https://docs.celeryproject.org/)
+Built as my individual module within an MSc Applied Data Science and Analytics case-study project (SRH University of Applied Sciences Heidelberg, Hamburg campus, February–May 2026). The scenario business, "BizClone Plumbing Services" in Hamburg, is fictional.
 
----
+## At a glance
 
-## 🎯 Overview
-
-BizClone is an AI-powered voice assistant that automates customer call handling for plumbing businesses. The system processes recorded audio files, transcribes speech, classifies intent, extracts entities, and manages appointments (book, cancel, reschedule) — all without human intervention.
-
-### Key Capabilities
-
-| Capability | Description |
+| | |
 |---|---|
-| **Transcription** | OpenAI Whisper — converts call recordings to text |
-| **Intent Classification** | GPT-4o-mini / Groq Llama 3 — 7 intent categories |
-| **Entity Extraction** | GPT-4o-mini — 8 entity types (name, phone, date, service, …) |
-| **Smart Scheduling** | Automatic booking with business-hours & conflict checks |
-| **Cancel / Reschedule** | Voice-driven appointment modification via API |
-| **Google Calendar** | Creates, updates, and deletes events on a target calendar |
-| **Priority Detection** | Urgency scoring (0-100) with emergency flagging |
-| **Knowledge Base** | RAG-powered FAQ retrieval with ChromaDB |
-| **Admin UI** | Jinja2 dashboard for services, FAQs, and daily reports |
+| **Input** | Recorded customer calls (audio files) via a CLI script or an upload endpoint |
+| **Pipeline** | Whisper transcription → intent classification → entity extraction → intent routing → booking / cancellation / rescheduling |
+| **Stack** | Python 3.11, FastAPI, SQLAlchemy, Alembic, PostgreSQL, Celery, Redis, OpenAI Whisper (local), Groq (Llama 3.3), OpenAI GPT-4o-mini, Google Calendar API, Jinja2, pytest, Docker Compose |
+| **Tests** | 173 automated tests (pytest); one integration test needs a running PostgreSQL and is skipped otherwise |
+| **Status** | Working local prototype; not deployed |
 
----
+## How it works
 
-## ✨ Features
-
-### Call Processing Pipeline
-- FastAPI backend with health monitoring
-- PostgreSQL database with SQLAlchemy ORM
-- Celery task queue with Redis broker
-- OpenAI Whisper transcription (local model)
-- Structured logging with `structlog`
-
-### AI Intelligence
-- GPT-4o-mini intent classification (7 categories)
-- Entity extraction (8 entity types)
-- Priority detection and scoring (0-100)
-- Conversation state management
-- ChromaDB vector database for RAG
-- Business knowledge base (50+ FAQs)
-
-### Scheduling & Calendar
-- Intelligent appointment booking
-- Business hours validation (08:00–18:00)
-- Conflict detection with auto-rescheduling
-- Google Calendar integration (create / update / delete events)
-- Appointment cancellation and rescheduling via API
-
-### Admin & Reporting
-- Admin dashboard (`/admin/`) with stats overview
-- Service management (add / edit / delete)
-- FAQ management (add / edit / delete)
-- Daily summary reports (`/admin/reports`, `/reports/daily`)
-
----
-
-## 🏗️ Architecture
-
-```
- Recording (WAV/MP3)
-        │
-        ▼
- ┌──────────────────────┐
- │  Audio File Storage   │   data/recordings/
- └──────────┬───────────┘
-            ▼
- ┌──────────────────────┐
- │  Whisper Transcription│   Celery task
- └──────────┬───────────┘
-            ▼
- ┌──────────────────────┐
- │  Intent Classification│   GPT-4o-mini / Groq
- └──────────┬───────────┘
-            ▼
- ┌──────────────────────┐
- │  Entity Extraction    │   GPT-4o-mini
- └──────────┬───────────┘
-            ▼
- ┌──────────────────────┐
- │  Scheduling / Cancel  │   Google Calendar sync
- │  / Reschedule         │
- └──────────┬───────────┘
-            ▼
- ┌──────────────────────┐
- │  PostgreSQL + Logs    │
- └──────────────────────┘
+```mermaid
+flowchart LR
+    A["Audio recording<br/>(CLI script or upload endpoint)"] --> B["Call record<br/>created"]
+    B -->|Celery| C["Transcription<br/>Whisper, runs locally"]
+    C --> D["Intent classification<br/>Groq Llama 3.3<br/>+ keyword fallback"]
+    D --> E["Entity extraction<br/>GPT-4o-mini<br/>+ rule-based fallback"]
+    E --> F{"Intent router"}
+    F -->|booking / emergency| G["Schedule appointment"]
+    F -->|cancel| H["Cancel appointment"]
+    F -->|reschedule| I["Reschedule appointment"]
+    F -->|question / other| J["Stored, no appointment"]
+    G --> K[("PostgreSQL")]
+    H --> K
+    I --> K
+    G -.->|optional| L["Google Calendar"]
+    H -.-> L
+    I -.-> L
 ```
 
----
+1. **Transcription.** The recording is transcribed with OpenAI's open-source Whisper model running on the local machine; no audio is sent to an external API.
+2. **Intent classification.** Groq (Llama 3.3 70B) assigns one of eight intents: booking, reschedule, cancel, pricing, availability, service question, emergency, other. If the API is unavailable, a keyword classifier takes over.
+3. **Entity extraction.** GPT-4o-mini extracts structured details — contact name and phone, address, service type and description, requested date and time, and urgency — with a rule-based fallback.
+4. **Routing.** An intent router decides the action. Cancel and reschedule requests never fall back to creating a new booking; booking requests without an explicit date or time are still booked but flagged; emergencies are scheduled immediately; questions about pricing, availability or services are stored without an appointment.
+5. **Scheduling.** Requested times are validated (not in the past, Monday–Friday, within business hours), conflicts are checked, and the next free slot is proposed if needed. Appointments are stored in PostgreSQL and, if configured, created, updated or deleted in Google Calendar.
 
-## 🛠️ Technology Stack
+Each step writes its result to the database, so every call can be traced from recording to appointment.
 
-| Layer | Technology |
+## Features
+
+- Asynchronous processing pipeline with chained Celery tasks
+- Fallbacks for every external AI service, so the pipeline keeps working without API access
+- Booking, cancellation and rescheduling flows with time validation and conflict handling
+- Optional two-way consistency with Google Calendar (service-account authentication)
+- Business knowledge (services, policies, 50 FAQs) loaded from `business_data.json` into PostgreSQL at startup
+- Admin dashboard (server-rendered with Jinja2) to manage services and FAQs and view daily reports
+- REST API for calendar views, availability, appointments and call records; interactive docs at `/docs`
+- Alembic database migrations
+
+## Tech stack
+
+| Area | Tools |
 |---|---|
-| **Framework** | FastAPI 0.109 · Uvicorn · Python 3.11+ |
-| **Database** | PostgreSQL 15+ · SQLAlchemy 2.0 · Alembic |
-| **Task Queue** | Celery 5.3 · Redis |
-| **AI / ML** | OpenAI GPT-4o-mini · Groq Llama 3 · Whisper (local) |
-| **Vector DB** | ChromaDB · sentence-transformers |
-| **Calendar** | Google Calendar API (service account) |
-| **Frontend** | Jinja2 templates · vanilla CSS |
-| **Logging** | structlog (JSON in prod, console in dev) |
-| **Testing** | pytest · pytest-cov |
+| API and web | FastAPI, Jinja2 templates, Uvicorn |
+| Data | PostgreSQL, SQLAlchemy, Alembic |
+| Background processing | Celery, Redis |
+| Speech and language | Whisper (local), Groq API (Llama 3.3 70B), OpenAI API (GPT-4o-mini) |
+| Integrations | Google Calendar API |
+| Testing and tooling | pytest, pytest-mock, Docker Compose |
 
----
-
-## 📁 Project Structure
+## Repository structure
 
 ```
-BizClone/
-├── backend/
-│   ├── app/
-│   │   ├── api/                # Routers (health, n8n, calendar, admin, reports, system)
-│   │   ├── config/             # Settings (pydantic-settings)
-│   │   ├── core/               # Logging, exceptions, middleware, business data loader
-│   │   ├── db/                 # Session, CRUD helpers
-│   │   ├── models/             # SQLAlchemy models (Customer, Call, Appointment, …)
-│   │   ├── schemas/            # Pydantic request/response schemas
-│   │   ├── services/
-│   │   │   ├── ai/             # Intent classifier, entity extractor, response generator
-│   │   │   ├── integrations/   # Google Calendar client
-│   │   │   ├── scheduling/     # Scheduler, cancel, reschedule services
-│   │   │   ├── reporting/      # Daily summary generator
-│   │   │   ├── voice/          # Whisper transcription, audio handler
-│   │   │   └── rag/            # ChromaDB knowledge base
-│   │   ├── static/css/         # Admin UI stylesheet
-│   │   ├── templates/          # Jinja2 HTML templates
-│   │   └── workers/            # Celery tasks (chained pipeline)
-│   ├── tests/                  # Unit & integration tests
-│   ├── migrations/             # Alembic migration versions
-│   └── process_recording.py    # CLI for processing audio files
-├── data/
-│   ├── recordings/             # Input audio files (WAV / MP3)
-│   ├── transcripts/            # Generated transcripts
-│   └── chroma/                 # Vector store persistence
-├── documentation/              # Project docs
-├── requirements.txt            # Python dependencies
-├── docker-compose.yml          # PostgreSQL + Redis
-└── README.md
+backend/
+  app/
+    api/            REST endpoints, upload endpoint, admin dashboard routes, reports
+    config/         Settings loaded from environment variables
+    core/           Logging, middleware, business data loader (business_data.json)
+    db/             Database session and CRUD functions
+    models/         SQLAlchemy models (calls, transcripts, appointments, customers, ...)
+    schemas/        Pydantic request/response models
+    services/
+      ai/           Intent classifier, entity extractor, conversation state, priority detector
+      voice/        Whisper transcription and audio handling
+      scheduling/   Scheduler, time validation, intent router, cancel and reschedule
+      integrations/ Google Calendar
+      calendar/     Calendar views and availability
+      reporting/    Daily summary
+    templates/      Admin dashboard pages
+    workers/        Celery app and pipeline tasks
+  migrations/       Alembic migrations
+  tests/            pytest suite
+  process_recording.py   CLI entry point for processing a recording
+docker-compose.yml  PostgreSQL and Redis for local development
+requirements.txt    Runtime dependencies
+requirements-dev.txt  Test and development dependencies
 ```
 
----
-
-## 🚀 Quick Start
+## Getting started
 
 ### Prerequisites
 
-- Python 3.11+
-- Docker & Docker Compose (PostgreSQL + Redis)
-- OpenAI API key
-- Google Calendar service-account JSON (optional)
+- Python 3.11
+- Docker Desktop (for PostgreSQL and Redis)
+- ffmpeg, required by Whisper (macOS: `brew install ffmpeg`)
+- A Groq API key and an OpenAI API key (optional: without them the keyword and rule-based fallbacks are used)
 
-### Setup
+### Installation
 
 ```bash
-# 1. Clone & virtualenv
-git clone <repository-url> && cd BizClone
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
+git clone https://github.com/samu2421/BizClone.git
+cd BizClone
+python3.11 -m venv venv
+source venv/bin/activate
+pip install -r requirements-dev.txt
+cp .env.example .env        # then add your API keys to .env
+```
 
-# 2. Configure
-cp .env.example .env   # Edit: OPENAI_API_KEY, DATABASE_URL, REDIS_URL
+The `.env` file must stay in the repository root; the application reads it from there.
 
-# 3. Start infrastructure
-docker-compose up -d
+### Run locally
 
-# 4. Migrate & seed
+```bash
+# 1. Start PostgreSQL and Redis
+docker compose up -d
+
+# 2. Create the database tables
 cd backend
 alembic upgrade heads
 
-# 5. Run
-uvicorn app.main:app --reload --port 8000          # Terminal 1
-celery -A app.workers.celery_app worker --loglevel=info  # Terminal 2
+# 3. Start the Celery worker (terminal 1, inside backend/)
+celery -A app.workers.celery_app worker --loglevel=info --pool=solo
+
+# 4. Start the API (terminal 2, inside backend/)
+uvicorn app.main:app --reload
 ```
 
-### Verify
+Use `heads` (plural): the migration history currently has two branches. On macOS, `--pool=solo` avoids Celery worker issues.
+
+If PostgreSQL is also installed through Homebrew, stop it first (`brew services stop postgresql@14`); both use port 5432.
+
+### Process a recording
+
+Place a short `.wav` recording in `backend/data/recordings/` and run (terminal 3, inside `backend/`):
 
 ```bash
-curl http://localhost:8000/health
-open http://localhost:8000/docs      # Swagger UI
-open http://localhost:8000/admin/    # Admin dashboard
+python process_recording.py --file data/recordings/call_01.wav
 ```
 
----
+Optional arguments: `--customer-phone` and `--business-phone`. Follow progress in the Celery worker's output.
 
-## 🎙️ Processing Recordings
+### Explore the results
+
+| URL | What it shows |
+|---|---|
+| http://localhost:8000/docs | Interactive API documentation |
+| http://localhost:8000/admin/ | Admin dashboard: services, FAQs, reports |
+| http://localhost:8000/reports/daily | Daily summary of calls and appointments (JSON) |
+| http://localhost:8000/health | Service health check |
+
+### Reset demo data
+
+```bash
+docker exec -it bizclone_postgres psql -U bizclone_user -d bizclone_db \
+  -c "TRUNCATE calls, transcripts, appointments, conversation_states RESTART IDENTITY CASCADE;"
+docker exec -it bizclone_redis redis-cli flushall
+```
+
+## Configuration
+
+All settings are read from environment variables; `.env.example` lists every variable the code uses. The most important ones:
+
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL`, `REDIS_URL` | Match `docker-compose.yml` by default |
+| `GROQ_API_KEY`, `OPENAI_API_KEY` | AI services (fallbacks are used if empty) |
+| `WHISPER_MODEL` | Whisper model size (`base` by default) |
+| `BUSINESS_HOURS_START`, `BUSINESS_HOURS_END`, `BUSINESS_TIMEZONE` | Scheduling rules (08:00–18:00, Europe/Berlin) |
+| `GOOGLE_CREDENTIALS_FILE`, `GOOGLE_TARGET_CALENDAR` | Optional Google Calendar sync via a service account |
+
+## Testing
 
 ```bash
 cd backend
-
-# Process a single recording
-python process_recording.py --file ../data/recordings/call_01.wav
-
-# With custom caller number
-python process_recording.py --file ../data/recordings/call_01.wav \
-    --customer-phone "+491234567890"
+pytest -q --no-cov
 ```
 
-The Celery pipeline automatically runs: **Transcription → Intent → Entities → Scheduling → Google Calendar**.
+The suite contains 173 tests covering the scheduler, time validation, cancellation and rescheduling, intent classification, entity extraction, priority detection, transcription, conversation state, calendar views and the database layer. External services (Whisper, Groq, OpenAI, Google Calendar) are mocked, and database tests use an in-memory SQLite database. One integration test checks the health endpoint against a real PostgreSQL and is skipped when none is running.
 
----
+Running `pytest` without `--no-cov` also produces a coverage report.
 
-## 🔗 API Endpoints
+## Limitations
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/health` | Health check |
-| `POST` | `/webhooks/n8n/voice` | Upload recording for processing |
-| `GET` | `/calendar/appointments` | List appointments |
-| `POST` | `/calendar/appointments/cancel` | Cancel an appointment |
-| `POST` | `/calendar/appointments/reschedule` | Reschedule an appointment |
-| `GET` | `/reports/daily` | Daily summary (JSON) |
-| `GET` | `/admin/` | Admin dashboard |
-| `GET` | `/admin/services` | Manage services |
-| `GET` | `/admin/faqs` | Manage FAQs |
-| `GET` | `/admin/reports` | Reports page |
+- **No live phone integration.** The system processes recorded audio files; it does not answer calls in real time. An earlier Twilio webhook prototype was removed.
+- **No spoken replies.** A response generator (`services/ai/response_generator.py`) is implemented and tested but not yet connected to the pipeline, so callers receive no automated reply.
+- **Priority detection is not wired in.** The keyword-based urgency detector is implemented and tested, but the pipeline currently handles emergencies through the "emergency" intent only.
+- **Business knowledge is not retrieval-based.** Services, policies and FAQs are stored in PostgreSQL from a JSON file; there is no vector search or RAG.
+- **The admin dashboard has no authentication** and is intended for local use only.
+- **English only** (Whisper language set to `en`); not containerised beyond PostgreSQL and Redis; not deployed.
 
----
+## Possible next steps
 
-## 🧪 Testing
+- Connect the response generator and priority detector to the pipeline
+- Real-time call handling through a telephony provider
+- Authentication for the admin dashboard
+- Containerise the API and Celery worker
+- Retrieval over the FAQ and policy data for answering customer questions
 
-```bash
-cd backend
-pytest -v                              # All tests
-pytest tests/test_cancel_reschedule.py  # Cancel/reschedule tests
-pytest --cov=app --cov-report=html     # With coverage
-```
+## Author and project context
 
----
-
-## ✅ Project Status: COMPLETED MVP (ALL 4 WEEKS FINISHED)
-
-| Milestone | Status |
-|---|---|
-| Week 1 — Core Pipeline (Transcription + Intent) | ✔ Complete |
-| Week 2 — Scheduling + Calendar Integration | ✔ Complete |
-| Week 3 — Cancel / Reschedule + RAG + Admin UI | ✔ Complete |
-| Week 4 — Intent Routing, Reporting, Cleanup | ✔ Complete |
-
-The system is **fully functional end-to-end**. Voice call processing, scheduling, cancellation, rescheduling, RAG-powered FAQ retrieval, admin dashboard, and daily reporting are all implemented and tested.
-
----
-
-## 🏆 Final System Capabilities
-
-- **Voice-based AI assistant** for service business call handling
-- **Call transcription** — OpenAI Whisper converts recordings to text
-- **Intent classification** — 7 intent categories via GPT-4o-mini / Groq Llama 3
-- **Entity extraction** — 8 entity types (name, phone, date, service, …)
-- **Automated booking** with Google Calendar integration and conflict detection
-- **Appointment cancellation** and **rescheduling** via voice commands
-- **Strict intent routing** — prevents accidental bookings from cancel/reschedule calls
-- **Booking validation** — rejects appointments without explicit date/time
-- **Knowledge base** — RAG-powered FAQ retrieval with ChromaDB (50+ FAQs)
-- **Emergency escalation** — priority scoring (0-100) with urgency flagging
-- **Admin dashboard** — service, FAQ, and report management UI
-- **Daily summary reporting** — call metrics, booking stats, service breakdown
-- **Full conversation logging** and analytics
-
----
-
-## 🚀 Deployment Status
-
-| Item | Status |
-|---|---|
-| Local development | ✔ Complete |
-| System tested and stable | ✔ All tests pass |
-| Production-ready MVP | ✔ Ready for demonstration |
-
----
-
-## 📚 Documentation
-
-| Document | Description |
-|---|---|
-| [WEEK3_COMPLETE.md](documentation/WEEK3_COMPLETE.md) | Full feature summary |
-| [PROJECT_STRUCTURE.md](documentation/PROJECT_STRUCTURE.md) | Detailed project structure |
-| [RECORDING_PROCESSING.md](documentation/RECORDING_PROCESSING.md) | Recording processing guide |
-| [QUICK_DEMO_GUIDE.md](documentation/QUICK_DEMO_GUIDE.md) | Demo walkthrough |
-| [QUICK_START.md](documentation/QUICK_START.md) | Quick start guide |
-| [TROUBLESHOOTING.md](documentation/TROUBLESHOOTING.md) | Common issues & fixes |
-
----
-
-## 📞 Business Configuration
-
-| Setting | Value |
-|---|---|
-| Business Name | BizClone Plumbing Services |
-| Location | Hamburg, Germany |
-| Business Hours | Mon–Fri, 08:00–18:00 |
-| Target Calendar | `21sspd@gmail.com` |
-| Appointment Duration | 60 min (+ 15 min buffer) |
-
----
-
-## 📄 License
-
-This project was developed as a case study for the MSc ADSA programme.
+Samiksha Dhere. The case-study project was assigned to a group, with each member building a separate customer channel of the same assistant. This repository contains the voice-call module, which I designed and implemented individually.
