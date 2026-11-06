@@ -11,6 +11,11 @@ from app.config.settings import settings
 from app.core.logging import get_logger
 from app.models.appointment import Appointment, AppointmentStatus, UrgencyLevel
 from app.db.crud import get_appointments_by_date_range
+from app.services.scheduling.validation import (
+    validate_requested_time,
+    enforce_future_time,
+    FUTURE_BUFFER_MINUTES,
+)
 
 logger = get_logger(__name__)
 
@@ -70,26 +75,37 @@ class SchedulingService:
     ) -> TimeSlot:
         """
         Check if a specific time slot is available.
-        
+
         Args:
             db: Database session
             requested_time: Requested start time
             duration: Appointment duration (defaults to configured duration)
-            
+
         Returns:
             TimeSlot with availability status
         """
         if duration is None:
             duration = self.appointment_duration
-        
+
         end_time = requested_time + duration
-        
+
         logger.info(
             "checking_availability",
             requested_time=requested_time.isoformat(),
             duration_minutes=duration.total_seconds() / 60
         )
-        
+
+        # ── Past-time guard ─────────────────────────────────────────
+        now = datetime.now(self.timezone)
+        req_tz = requested_time if requested_time.tzinfo else requested_time.replace(tzinfo=self.timezone)
+        if req_tz < now:
+            return TimeSlot(
+                start_time=requested_time,
+                end_time=end_time,
+                is_available=False,
+                reason="Requested time is in the past"
+            )
+
         # Check if within business hours
         if not self._is_within_business_hours(requested_time, end_time):
             return TimeSlot(
@@ -157,7 +173,23 @@ class SchedulingService:
             second=0,
             microsecond=0
         )
-        
+
+        # ── Never start searching from the past ────────────────────
+        now = datetime.now(self.timezone)
+        effective_now = now + timedelta(minutes=FUTURE_BUFFER_MINUTES)
+        if current_date.tzinfo is None:
+            effective_now_naive = effective_now.replace(tzinfo=None)
+        else:
+            effective_now_naive = effective_now
+        if current_date < effective_now_naive:
+            current_date = effective_now_naive.replace(second=0, microsecond=0)
+            # If we've landed mid-day, don't reset to morning
+            if current_date.time() < self.business_hours_start:
+                current_date = current_date.replace(
+                    hour=self.business_hours_start.hour,
+                    minute=self.business_hours_start.minute,
+                )
+
         days_checked = 0
         while len(available_slots) < num_slots and days_checked < num_days:
             # Generate slots for the current day
@@ -204,6 +236,9 @@ class SchedulingService:
         if requested_time is None:
             requested_time = appointment.requested_time_start
 
+        # ── If user provided a specific time, PRIORITIZE it ───────
+        user_provided_time = requested_time is not None
+
         # If still no time, find next available slot
         if requested_time is None:
             now = datetime.now(self.timezone)
@@ -217,6 +252,16 @@ class SchedulingService:
                 )
 
             requested_time = available_slots[0].start_time
+            logger.info("auto_slot_selected", slot=requested_time.isoformat())
+
+        # ── Enforce future time (never schedule in the past) ──────
+        requested_time = enforce_future_time(requested_time)
+
+        if user_provided_time:
+            logger.info(
+                "requested_time_received",
+                requested_time=requested_time.isoformat(),
+            )
 
         # For emergencies, force scheduling
         if force_emergency or appointment.urgency == UrgencyLevel.EMERGENCY:

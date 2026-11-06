@@ -81,3 +81,7 @@ credentials/
 
 # Added by ggshield
 .cache_ggshield
+
+# Personal report files (not part of the project)
+BizClone_Technical_Report.docx
+generate_report.py

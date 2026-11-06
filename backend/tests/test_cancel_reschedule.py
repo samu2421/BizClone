@@ -3,7 +3,6 @@ Tests for appointment cancellation and rescheduling services.
 """
 import pytest
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 from unittest.mock import patch
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -18,9 +17,46 @@ from app.db.crud import (
     get_appointment_by_id,
 )
 from app.db.base import Base
+from app.config.settings import settings
+from app.services.scheduling.scheduler import SchedulingService
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
-TZ = ZoneInfo("Europe/Berlin")
+
+# Business hours, timezone and slot duration all come from settings via the
+# scheduler, so these tests stay correct if the configuration changes.
+_SCHEDULER = SchedulingService()
+TZ = _SCHEDULER.timezone
+
+
+def business_slot(days_ahead=1, hour=None, *, now=None):
+    """Return an aware datetime `days_ahead` *business* days from `now`.
+
+    The returned slot is always on a weekday and always starts and ends
+    inside the configured business hours, so it passes
+    validate_requested_time() on whichever day of the week the suite runs.
+    Counting business days (rather than calendar days) means distinct
+    `days_ahead` values always land on distinct weekdays.
+    """
+    bh_start = _SCHEDULER.business_hours_start
+    bh_end = _SCHEDULER.business_hours_end
+    duration = timedelta(
+        minutes=getattr(settings, "appointment_duration_minutes", 60)
+    )
+
+    current = (now or datetime.now(TZ)).astimezone(TZ)
+    for _ in range(max(days_ahead, 1)):
+        current += timedelta(days=1)
+        while current.weekday() >= 5:   # skip Sat/Sun
+            current += timedelta(days=1)
+
+    # Latest start hour whose slot still ends by close of business.
+    latest = (datetime.combine(current.date(), bh_end) - duration).hour
+    chosen = (
+        bh_start.hour if hour is None
+        else min(max(hour, bh_start.hour), latest)
+    )
+
+    return current.replace(hour=chosen, minute=0, second=0, microsecond=0)
 
 
 @pytest.fixture(scope="function")
@@ -58,9 +94,7 @@ def sample_appointment(db_session):
         to_number="+15559876543",
         direction="inbound",
     )
-    tomorrow = datetime.now(TZ).replace(
-        hour=10, minute=0, second=0, microsecond=0
-    ) + timedelta(days=1)
+    tomorrow = business_slot(1, 10)
     appt = create_appointment(
         db=db_session,
         call_id=call.id,
@@ -169,9 +203,7 @@ class TestRescheduleService:
     ):
         svc = RescheduleService()
         appt = sample_appointment["appointment"]
-        new_time = datetime.now(TZ).replace(
-            hour=14, minute=0, second=0, microsecond=0
-        ) + timedelta(days=2)
+        new_time = business_slot(2, 14)
 
         result = svc.reschedule(
             db_session,
@@ -191,7 +223,7 @@ class TestRescheduleService:
 
     def test_reschedule_not_found(self, db_session):
         svc = RescheduleService()
-        new_time = datetime.now(TZ) + timedelta(days=3)
+        new_time = business_slot(3)
 
         result = svc.reschedule(
             db_session,
@@ -220,9 +252,7 @@ class TestRescheduleService:
         svc = RescheduleService()
         appt = sample_appointment["appointment"]
         # Use a time within business hours so DB check passes
-        new_time = datetime.now(TZ).replace(
-            hour=10, minute=0, second=0, microsecond=0
-        ) + timedelta(days=2)
+        new_time = business_slot(2, 10)
 
         result = svc.reschedule(
             db_session,
@@ -249,9 +279,7 @@ class TestRescheduleService:
     ):
         svc = RescheduleService()
         appt = sample_appointment["appointment"]
-        alt_time = datetime.now(TZ).replace(
-            hour=15, minute=0, second=0, microsecond=0
-        ) + timedelta(days=3)
+        alt_time = business_slot(3, 15)
 
         with patch(
             "app.services.scheduling.reschedule.find_next_available_slot",
@@ -259,7 +287,7 @@ class TestRescheduleService:
         ):
             result = svc.reschedule(
                 db_session,
-                new_start_time=datetime.now(TZ) + timedelta(days=2),
+                new_start_time=business_slot(2, 14),
                 appointment_id=appt.id,
             )
 

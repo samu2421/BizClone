@@ -58,27 +58,18 @@ class Settings(BaseSettings):
     groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
     groq_model: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL")
     
-    # ElevenLabs Configuration
-    elevenlabs_api_key: str = Field(default="", alias="ELEVENLABS_API_KEY")
-    elevenlabs_voice_id: str = Field(default="", alias="ELEVENLABS_VOICE_ID")
-    use_local_tts: bool = Field(default=False, alias="USE_LOCAL_TTS")
-    
     # Whisper Configuration
     whisper_model: str = Field(default="base", alias="WHISPER_MODEL")
     whisper_device: str = Field(default="cpu", alias="WHISPER_DEVICE")
     whisper_language: str = Field(default="en", alias="WHISPER_LANGUAGE")
-    
-    # ChromaDB Configuration
-    chroma_persist_directory: str = Field(default="./data/chroma", alias="CHROMA_PERSIST_DIRECTORY")
-    chroma_collection_name: str = Field(default="plumber_knowledge", alias="CHROMA_COLLECTION_NAME")
-    
+
     # Business Configuration
-    business_name: str = Field(default="QuickFix Plumbing", alias="BUSINESS_NAME")
+    business_name: str = Field(default="BizClone Plumbing Services", alias="BUSINESS_NAME")
     business_phone: str = Field(default="", alias="BUSINESS_PHONE")
     business_email: str = Field(default="", alias="BUSINESS_EMAIL")
     business_hours_start: str = Field(default="08:00", alias="BUSINESS_HOURS_START")
     business_hours_end: str = Field(default="18:00", alias="BUSINESS_HOURS_END")
-    business_timezone: str = Field(default="America/New_York", alias="BUSINESS_TIMEZONE")
+    business_timezone: str = Field(default="Europe/Berlin", alias="BUSINESS_TIMEZONE")
     
     # Scheduling Configuration
     appointment_duration_minutes: int = Field(default=60, alias="APPOINTMENT_DURATION_MINUTES")
