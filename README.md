@@ -43,6 +43,12 @@ flowchart LR
 
 Each step writes its result to the database, so every call can be traced from recording to appointment.
 
+## Screenshots
+
+| Admin dashboard: daily report | Google Calendar after processing three calls |
+|---|---|
+| ![Admin dashboard](docs/screenshots/Dashboard.jpg) | ![Google Calendar events created by the pipeline](docs/screenshots/Scheduling.jpg) |
+
 ## Features
 
 - Asynchronous processing pipeline with chained Celery tasks
