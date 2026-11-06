@@ -15,9 +15,32 @@ from app.db.crud import (
     create_appointment,
 )
 from app.db.base import Base
+from app.services.scheduling.scheduler import SchedulingService
 
 # Test database URL (SQLite in-memory)
 TEST_DATABASE_URL = "sqlite:///:memory:"
+
+# Timezone comes from settings via the scheduler, so the helper below stays
+# correct if the configuration changes.
+_SCHEDULER = SchedulingService()
+
+
+def next_business_date(days_ahead=1, *, now=None):
+    """Return a date `days_ahead` *business* days from `now`, never a weekend.
+
+    Availability is only generated for weekdays, and the scheduler never
+    searches earlier than `now + buffer` — so asking about "today" yields
+    zero slots late in the day or at a weekend. Asking about a future
+    weekday makes the result independent of when the suite runs.
+    """
+    current = (now or datetime.now(_SCHEDULER.timezone)).astimezone(
+        _SCHEDULER.timezone
+    )
+    for _ in range(max(days_ahead, 1)):
+        current += timedelta(days=1)
+        while current.weekday() >= 5:   # skip Sat/Sun
+            current += timedelta(days=1)
+    return current.date()
 
 
 @pytest.fixture(scope="function")
@@ -231,15 +254,15 @@ class TestCalendarService:
 
     def test_get_availability(self, db_session, calendar_service, sample_appointments):
         """Test getting availability for a date."""
-        today = date.today()
+        target_date = next_business_date(1)
 
         availability = calendar_service.get_availability(
             db_session,
-            today,
+            target_date,
             num_slots=8
         )
 
-        assert availability["date"] == today
+        assert availability["date"] == target_date
         assert "available_slots" in availability
         assert "total_slots" in availability
         assert "available_count" in availability

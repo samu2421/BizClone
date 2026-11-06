@@ -207,8 +207,12 @@ def find_next_available_slot(
     step = timedelta(minutes=duration_minutes + buffer_minutes)
     max_daily = getattr(settings, "max_daily_appointments", 8)
 
-    cursor = preferred_start
-    end_boundary = preferred_start + timedelta(days=search_days)
+    # ── Never search from the past ───────────────────────────────
+    tz = preferred_start.tzinfo
+    now = datetime.now(tz) if tz else datetime.now()
+    effective_now = now + timedelta(minutes=30)  # future buffer
+    cursor = max(preferred_start, effective_now)
+    end_boundary = cursor + timedelta(days=search_days)
 
     while cursor < end_boundary:
         # Skip weekends

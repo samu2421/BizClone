@@ -300,8 +300,10 @@ class TestPriorityDetectionTask:
 
     @patch("app.workers.tasks.SessionLocal")
     @patch("app.workers.tasks.get_call_by_id")
+    @patch("app.workers.tasks.get_transcript_by_call_id")
     def test_detect_priority_task_no_transcript(
         self,
+        mock_get_transcript,
         mock_get_call,
         mock_session,
         mock_db,
@@ -312,8 +314,10 @@ class TestPriorityDetectionTask:
 
         # Setup mocks
         mock_session.return_value = mock_db
-        mock_call.transcript = None
         mock_get_call.return_value = mock_call
+        # The task reads the transcript via get_transcript_by_call_id(), not
+        # via call.transcript.
+        mock_get_transcript.return_value = None
 
         # Execute
         result = detect_priority_task("call-123")

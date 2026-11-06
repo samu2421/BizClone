@@ -1,8 +1,19 @@
-# Core Framework
+# BizClone - runtime dependencies
+#
+# Every package below is imported by backend/app, backend/process_recording.py
+# or backend/migrations, or is required to make one of those imports work
+# (database driver, template engine, multipart parser, inference engine).
+
+# Web Framework
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+jinja2==3.1.6
+
+# Configuration
 pydantic>=2.6.0
 pydantic-settings>=2.2.0
+python-dotenv==1.0.0
 
 # Database
 sqlalchemy==2.0.25
@@ -13,62 +24,24 @@ alembic==1.13.1
 redis==5.0.1
 celery==5.3.6
 
-# AI & ML
+# AI Services
 openai==1.10.0
 groq>=0.4.0
-chromadb==0.4.22
-sentence-transformers==2.3.1
-tiktoken==0.5.2
 
-# Speech Processing
-setuptools>=65.0.0
-git+https://github.com/openai/whisper.git
-elevenlabs==1.2.2
-pydub==0.25.1
-soundfile==0.12.1
-numpy==1.26.3
-ffmpeg-python==0.2.0
+# Speech-to-Text
+# Requires the ffmpeg binary on PATH (macOS: brew install ffmpeg).
+# 20250625 is the first release that builds without pkg_resources, which
+# setuptools >= 81 no longer bundles.
+openai-whisper==20250625
 torch>=2.0.0
-torchaudio>=2.0.0
+numpy==1.26.3
 
-# Google Calendar
+# Google Calendar (service-account auth only)
 google-api-python-client>=2.100.0
 google-auth>=2.23.0
-google-auth-oauthlib>=1.1.0
 
-# HTTP & Async
+# HTTP
 httpx==0.26.0
-aiofiles==23.2.1
-python-multipart==0.0.6
 
-# Environment & Config
-python-dotenv==1.0.0
-
-# Logging & Monitoring
+# Logging
 structlog==24.1.0
-python-json-logger==2.0.7
-
-# Utilities
-python-dateutil==2.8.2
-pytz==2023.3.post1
-phonenumbers==8.13.27
-
-# Testing
-pytest==7.4.4
-pytest-asyncio==0.23.3
-pytest-cov==4.1.0
-pytest-mock==3.12.0
-httpx==0.26.0
-faker==22.0.0
-
-# Development
-black==23.12.1
-flake8==7.0.0
-mypy==1.8.0
-isort==5.13.2
-
-# Security
-cryptography==42.0.0
-passlib==1.7.4
-python-jose[cryptography]==3.3.0
-

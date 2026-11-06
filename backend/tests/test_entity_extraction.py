@@ -217,6 +217,10 @@ class TestEntityExtractionTask:
         call = Mock()
         call.id = "call-123"
         call.customer_id = "customer-456"
+        # route_intent() reads call.intent; it must be a real intent string,
+        # otherwise routing falls through to "info_only" and no appointment
+        # is created.
+        call.intent = "booking"
         return call
 
     @pytest.fixture
@@ -231,8 +235,10 @@ class TestEntityExtractionTask:
     @patch('app.workers.tasks.create_call_event')
     @patch('app.workers.tasks.create_appointment')
     @patch('app.workers.tasks.EntityExtractor')
+    @patch('app.workers.tasks.schedule_appointment_task')
     def test_extract_entities_task_success(
         self,
+        mock_schedule_task,
         mock_extractor_class,
         mock_create_appointment,
         mock_create_event,
@@ -255,6 +261,7 @@ class TestEntityExtractionTask:
         mock_result = Mock()
         mock_result.date_time_text = "tomorrow at 2pm"
         mock_result.requested_date = "2026-02-28"
+        mock_result.requested_time = "14:00"
         mock_result.location_text = None
         mock_result.address = "123 Main St"
         mock_result.city = "Springfield"
@@ -280,6 +287,7 @@ class TestEntityExtractionTask:
         # Verify
         assert result["call_id"] == "call-123"
         assert result["appointment_id"] == "appointment-789"
+        assert result["action"] == "book"
         assert result["service_type"] == "sink_repair"
         assert result["urgency"] == "medium"
         assert result["has_date"] is True
@@ -287,6 +295,7 @@ class TestEntityExtractionTask:
 
         mock_get_call.assert_called_once_with(mock_db, "call-123")
         mock_create_appointment.assert_called_once()
+        mock_schedule_task.delay.assert_called_once()
         mock_db.close.assert_called_once()
 
     @patch('app.workers.tasks.SessionLocal')

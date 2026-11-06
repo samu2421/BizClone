@@ -24,6 +24,7 @@ from app.services.integrations.google_calendar import (
     update_calendar_event,
 )
 from app.services.scheduling.scheduler import SchedulingService
+from app.services.scheduling.validation import validate_requested_time, enforce_future_time
 
 logger = get_logger(__name__)
 
@@ -103,6 +104,25 @@ class RescheduleService:
 
         # ---- resolve duration ----
         duration = getattr(settings, "appointment_duration_minutes", 60)
+
+        # ---- past-time validation ----
+        validation = validate_requested_time(new_start_time)
+        if not validation.is_valid:
+            logger.warning(
+                "reschedule_requested_time_rejected",
+                appointment_id=appointment.id,
+                reason=validation.reason,
+                requested=new_start_time.isoformat(),
+            )
+            return RescheduleResult(
+                success=False,
+                appointment_id=appointment.id,
+                message=f"Cannot reschedule: {validation.reason}",
+            )
+
+        # Enforce future time floor
+        new_start_time = enforce_future_time(new_start_time)
+
         if new_end_time is None:
             new_end_time = new_start_time + timedelta(minutes=duration)
 
